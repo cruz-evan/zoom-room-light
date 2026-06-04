@@ -1,11 +1,29 @@
 .DS_Store
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
 
 # Local secrets and device-specific config
 .env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*secret*.json
+*credentials*.json
 micropython_light/config.py
+micropython_light/secrets.py
 
 # Generated screenshots/artifacts
 zoom_light_dashboard.png

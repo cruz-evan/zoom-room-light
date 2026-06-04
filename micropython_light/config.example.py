@@ -1,7 +1,7 @@
 # Copy this file to config.py on the MicroPython device.
 
-WIFI_SSID = "your-wifi-name"
-WIFI_PASSWORD = "your-wifi-password"
+WIFI_SSID = ""
+WIFI_PASSWORD = ""
 
 # Use your laptop's LAN IP, not localhost.
 # Example: "http://192.168.1.42:5050/state"

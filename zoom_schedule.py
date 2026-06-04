@@ -7,13 +7,13 @@ Setup:
      Server-to-Server OAuth app if you are an account admin.
   2. Set either:
 
-       ZOOM_ACCESS_TOKEN=your_existing_oauth_access_token
+       ZOOM_ACCESS_TOKEN=
 
      or all three server-to-server variables:
 
-       ZOOM_ACCOUNT_ID=your_account_id
-       ZOOM_CLIENT_ID=your_client_id
-       ZOOM_CLIENT_SECRET=your_client_secret
+       ZOOM_ACCOUNT_ID=
+       ZOOM_CLIENT_ID=
+       ZOOM_CLIENT_SECRET=
 
 Usage:
   python zoom_schedule.py

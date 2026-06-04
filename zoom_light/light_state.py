@@ -10,6 +10,7 @@ from typing import Any
 
 GREEN = "green"
 YELLOW = "yellow"
+ORANGE = "orange"
 RED = "red"
 PURPLE = "purple"
 
@@ -21,6 +22,8 @@ class LightState:
     in_use: bool = False
     active_meeting_id: str = ""
     active_topic: str = ""
+    active_meeting_end_time: str = ""
+    minutes_until_end: int | None = None
     next_meeting_id: str = ""
     next_meeting_topic: str = ""
     next_meeting_start_time: str = ""
@@ -39,12 +42,13 @@ class LightEvent:
 
 
 class LightController:
-    def __init__(self) -> None:
+    def __init__(self, hardware_output: Any | None = None) -> None:
         self._state = LightState(updated_at=self._utc_now())
         self._lock = threading.Lock()
         self._subscribers: set[queue.Queue[str]] = set()
         self._recent_events: list[LightEvent] = []
         self._active_participants: dict[str, set[str]] = {}
+        self._hardware_output = hardware_output
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -73,29 +77,30 @@ class LightController:
 
         with self._lock:
             if event == "meeting.started":
-                self._state.color = RED
-                self._state.label = "IN USE"
                 self._state.in_use = True
                 self._state.active_meeting_id = meeting_id
                 self._state.active_topic = topic
+                self._clear_end_warning()
                 self._clear_next_meeting()
+                self._apply_active_color()
             elif event == "meeting.ended":
                 if meeting_id:
                     self._active_participants.pop(meeting_id, None)
                 self._state.in_use = False
                 self._state.active_meeting_id = ""
                 self._state.active_topic = ""
+                self._clear_end_warning()
                 self._apply_idle_color()
             elif event == "meeting.participant_joined":
                 if meeting_id and participant_key:
                     self._active_participants.setdefault(meeting_id, set()).add(participant_key)
-                self._state.color = RED
-                self._state.label = "IN USE"
                 self._state.in_use = True
                 self._state.active_meeting_id = meeting_id
+                self._clear_end_warning()
                 self._clear_next_meeting()
                 if topic:
                     self._state.active_topic = topic
+                self._apply_active_color()
             elif event == "meeting.participant_left":
                 if meeting_id and participant_key:
                     self._active_participants.setdefault(meeting_id, set()).discard(participant_key)
@@ -104,17 +109,16 @@ class LightController:
                     self._state.in_use = False
                     self._state.active_meeting_id = ""
                     self._state.active_topic = ""
+                    self._clear_end_warning()
                     self._apply_idle_color()
                 else:
-                    self._state.color = RED
-                    self._state.label = "IN USE"
                     self._state.in_use = True
+                    self._apply_active_color()
             elif event == "meeting.updated":
                 if topic:
                     self._state.active_topic = topic
                 if self._state.in_use:
-                    self._state.color = RED
-                    self._state.label = "IN USE"
+                    self._apply_active_color()
                 else:
                     self._apply_idle_color()
             elif event == "manual.reset":
@@ -122,6 +126,7 @@ class LightController:
                 self._state.in_use = False
                 self._state.active_meeting_id = ""
                 self._state.active_topic = ""
+                self._clear_end_warning()
                 self._clear_next_meeting()
                 self._apply_idle_color()
             else:
@@ -140,6 +145,58 @@ class LightController:
             subscriber.put(message)
 
         self.print_state(snapshot)
+        self._publish_hardware(snapshot)
+        return snapshot
+
+    def update_end_warning(
+        self,
+        *,
+        meeting_id: str,
+        topic: str,
+        end_time: str,
+        minutes_until_end: int | None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            before = (
+                self._state.active_meeting_end_time,
+                self._state.minutes_until_end,
+                self._state.color,
+                self._state.label,
+            )
+            self._state.active_meeting_end_time = end_time
+            self._state.minutes_until_end = minutes_until_end
+            self._state.last_event = "schedule.ending_soon" if minutes_until_end is not None else "schedule.end_clear"
+            self._state.updated_at = self._utc_now()
+
+            if self._state.in_use:
+                if meeting_id:
+                    self._state.active_meeting_id = meeting_id
+                if topic:
+                    self._state.active_topic = topic
+                self._apply_active_color()
+
+            after = (
+                self._state.active_meeting_end_time,
+                self._state.minutes_until_end,
+                self._state.color,
+                self._state.label,
+            )
+            snapshot = asdict(self._state)
+            snapshot["recent_events"] = [asdict(item) for item in self._recent_events]
+            if before == after:
+                return snapshot
+
+            self._record_event(self._state.last_event, meeting_id, topic or end_time)
+            snapshot = asdict(self._state)
+            snapshot["recent_events"] = [asdict(item) for item in self._recent_events]
+            message = json.dumps(snapshot)
+            subscribers = list(self._subscribers)
+
+        for subscriber in subscribers:
+            subscriber.put(message)
+
+        self.print_state(snapshot)
+        self._publish_hardware(snapshot)
         return snapshot
 
     def update_schedule_warning(
@@ -173,15 +230,29 @@ class LightController:
             subscriber.put(message)
 
         self.print_state(snapshot)
+        self._publish_hardware(snapshot)
         return snapshot
+
+    def publish_current_state(self) -> None:
+        self._publish_hardware(self.snapshot())
+
+    def close(self) -> None:
+        output = self._hardware_output
+        if output is not None and hasattr(output, "close"):
+            output.close()
 
     @staticmethod
     def print_state(state: dict[str, Any]) -> None:
         topic = f" | {state['active_topic']}" if state["active_topic"] else ""
         meeting = f" | meeting={state['active_meeting_id']}" if state["active_meeting_id"] else ""
+        ending = (
+            f" | ending_in={state['minutes_until_end']}m"
+            if state.get("minutes_until_end") is not None
+            else ""
+        )
         print(
             f"[{state['updated_at']}] LIGHT={state['color'].upper()} "
-            f"STATUS={state['label']} EVENT={state['last_event']}{meeting}{topic}",
+            f"STATUS={state['label']} EVENT={state['last_event']}{meeting}{topic}{ending}",
             flush=True,
         )
 
@@ -230,8 +301,28 @@ class LightController:
             self._state.color = GREEN
             self._state.label = "FREE"
 
+    def _apply_active_color(self) -> None:
+        if self._state.minutes_until_end is not None:
+            self._state.color = ORANGE
+            self._state.label = "ENDING SOON"
+        else:
+            self._state.color = RED
+            self._state.label = "IN USE"
+
+    def _clear_end_warning(self) -> None:
+        self._state.active_meeting_end_time = ""
+        self._state.minutes_until_end = None
+
     def _clear_next_meeting(self) -> None:
         self._state.next_meeting_id = ""
         self._state.next_meeting_topic = ""
         self._state.next_meeting_start_time = ""
         self._state.minutes_until_next = None
+
+    def _publish_hardware(self, snapshot: dict[str, Any]) -> None:
+        if self._hardware_output is None:
+            return
+        try:
+            self._hardware_output.publish(snapshot)
+        except Exception as exc:
+            print(f"Hardware output failed: {exc}", flush=True)

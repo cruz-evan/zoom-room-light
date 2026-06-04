@@ -28,14 +28,16 @@ def main() -> int:
     print("Hardware/demo state path: /state", flush=True)
     print("Try: /simulate/start and /simulate/end", flush=True)
     server.light.print_state(server.light.snapshot())
+    server.light.publish_current_state()
     server.schedule.start()
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        server.schedule.stop()
         print("\nStopping server.", flush=True)
         return 0
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

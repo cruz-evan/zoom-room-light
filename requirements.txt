@@ -1,1 +1,1 @@
-# Runtime dependencies: Python standard library only.
+pyserial>=3.5

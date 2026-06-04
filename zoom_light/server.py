@@ -13,14 +13,23 @@ from .dashboard import DASHBOARD_HTML
 from .light_state import LightController
 from .schedule import ScheduleWatcher
 from .security import encrypted_validation_token, verify_zoom_signature
+from .serial_output import SerialLightOutput, command_from_state
 
 
 class ZoomLightServer(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int], config: ServerConfig) -> None:
         super().__init__(server_address, ZoomLightHandler)
         self.config = config
-        self.light = LightController()
+        self.hardware_output = SerialLightOutput.from_server_config(config)
+        self.light = LightController(self.hardware_output)
         self.schedule = ScheduleWatcher(config, self.light)
+
+    def server_close(self) -> None:
+        if hasattr(self, "schedule"):
+            self.schedule.stop()
+        if hasattr(self, "light"):
+            self.light.close()
+        super().server_close()
 
 
 class ZoomLightHandler(BaseHTTPRequestHandler):
@@ -55,6 +64,24 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
 
         if path == "/state":
             self.write_json(HTTPStatus.OK, self.server.light.snapshot())
+            return
+
+        if path == "/device/state":
+            if not self.authorize_device():
+                self.write_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            snapshot = self.server.light.snapshot()
+            command = command_from_state(snapshot)
+            self.write_json(
+                HTTPStatus.OK,
+                {
+                    "v": 1,
+                    "command": command,
+                    "poll_seconds": 5,
+                    "updated_at": snapshot.get("updated_at", ""),
+                    "last_event": snapshot.get("last_event", ""),
+                },
+            )
             return
 
         if path == "/events":
@@ -110,7 +137,21 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
                 meeting_id="demo-upcoming",
                 topic="Hackathon judging",
                 start_time="demo",
-                minutes_until_start=14,
+                minutes_until_start=5,
+            )
+            self.write_json(HTTPStatus.OK, state)
+            return
+
+        if path == "/simulate/ending-soon":
+            self.server.light.update_from_zoom_event(
+                "meeting.started",
+                {"object": {"id": "demo-meeting", "topic": "Hackathon demo"}},
+            )
+            state = self.server.light.update_end_warning(
+                meeting_id="demo-meeting",
+                topic="Hackathon demo",
+                end_time="demo",
+                minutes_until_end=5,
             )
             self.write_json(HTTPStatus.OK, state)
             return
@@ -141,6 +182,14 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
 
         self.write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
+    def authorize_device(self) -> bool:
+        token = self.server.config.device_token
+        if not token:
+            return True
+
+        header = self.headers.get("Authorization", "")
+        return header == f"Bearer {token}"
+
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path != "/zoom/webhook":
@@ -169,8 +218,18 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
         if not secret_token:
             print("Warning: ZOOM_WEBHOOK_SECRET_TOKEN is not set; skipping signature checks.", flush=True)
 
+        if event in ("meeting.created", "meeting.deleted"):
+            try:
+                self.server.schedule.run_once()
+                state = self.server.light.snapshot()
+            except Exception as exc:
+                print(f"Schedule refresh after {event} failed: {exc}", flush=True)
+                state = self.server.light.snapshot()
+            self.write_json(HTTPStatus.OK, {"ok": True, "state": state})
+            return
+
         state = self.server.light.update_from_zoom_event(event, payload)
-        if event in ("meeting.ended", "meeting.participant_left"):
+        if event in ("meeting.ended", "meeting.participant_left", "meeting.updated"):
             try:
                 self.server.schedule.run_once()
                 state = self.server.light.snapshot()

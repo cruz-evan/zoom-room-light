@@ -122,6 +122,7 @@ DASHBOARD_HTML = """<!doctype html>
       <button type="button" data-url="/simulate/join">Simulate Join</button>
       <button type="button" data-url="/simulate/leave">Simulate Leave</button>
       <button type="button" data-url="/simulate/upcoming">Simulate Upcoming</button>
+      <button type="button" data-url="/simulate/ending-soon">Simulate Ending Soon</button>
       <button type="button" data-url="/simulate/clear-upcoming">Clear Upcoming</button>
       <button type="button" data-url="/schedule/check">Check Schedule</button>
       <button type="button" data-url="/reset">Reset</button>
@@ -132,6 +133,7 @@ DASHBOARD_HTML = """<!doctype html>
     const colorMap = {
       green: ["#33d17a", "rgba(51, 209, 122, 0.55)"],
       yellow: ["#f6d32d", "rgba(246, 211, 45, 0.55)"],
+      orange: ["#ff9f1c", "rgba(255, 159, 28, 0.55)"],
       red: ["#ff4d4d", "rgba(255, 77, 77, 0.58)"],
       purple: ["#c061cb", "rgba(192, 97, 203, 0.55)"]
     };
@@ -151,6 +153,11 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     function nextMeetingText(state) {
+      if (state.minutes_until_end !== null && state.minutes_until_end !== undefined) {
+        const minutes = state.minutes_until_end;
+        const unit = minutes === 1 ? "minute" : "minutes";
+        return `Meeting ends in ${minutes} ${unit}`;
+      }
       if (!state.next_meeting_id) return "";
       const topic = state.next_meeting_topic || "Scheduled meeting";
       const minutes = state.minutes_until_next;
