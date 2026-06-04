@@ -1,0 +1,109 @@
+name: Pico W OTA
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/pico-ota.yml"
+      - "rp2-zoom-leds/device/**"
+      - "rp2-zoom-leds/scripts/build_ota_site.py"
+      - "rp2-zoom-leds/tests/**"
+      - "rp2-zoom-leds/requirements-dev.txt"
+  pull_request:
+    paths:
+      - ".github/workflows/pico-ota.yml"
+      - "rp2-zoom-leds/device/**"
+      - "rp2-zoom-leds/scripts/build_ota_site.py"
+      - "rp2-zoom-leds/tests/**"
+      - "rp2-zoom-leds/requirements-dev.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and package
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: rp2-zoom-leds
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile firmware files
+        run: python -m py_compile device/*.py scripts/build_ota_site.py
+
+      - name: Run tests
+        run: pytest
+
+      - name: Build OTA site dry run
+        run: >
+          python scripts/build_ota_site.py
+          --base-url "https://example.com/rp2-zoom-leds"
+          --version "dry-run"
+          --output /tmp/pico-ota-site
+
+  deploy-pages:
+    name: Deploy OTA manifest
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    defaults:
+      run:
+        working-directory: rp2-zoom-leds
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build OTA site
+        env:
+          DEFAULT_OTA_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          OTA_BASE_URL: ${{ vars.OTA_BASE_URL }}
+        run: |
+          BASE_URL="${OTA_BASE_URL:-$DEFAULT_OTA_BASE_URL}"
+          python scripts/build_ota_site.py \
+            --base-url "$BASE_URL" \
+            --version "$GITHUB_SHA" \
+            --output _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: rp2-zoom-leds/_site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

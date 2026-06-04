@@ -1,0 +1,6 @@
+mpremote>=1.24
+pyserial>=3.5
+python-dotenv>=1.0
+pytest>=8.0
+requests>=2.31
+

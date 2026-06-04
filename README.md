@@ -130,15 +130,14 @@ Demo routes:
 
 ## Pico / RP2040 Hardware
 
-This repo is configured to work with the `rp2-zoom-leds` Pico firmware. Keep
-that firmware in a sibling checkout when developing locally, for example:
+This repo includes the `rp2-zoom-leds` Pico firmware project:
 
 ```text
-../rp2-zoom-leds
+rp2-zoom-leds/
 ```
 
-Keep using that project's device deploy scripts for the Pico. The expected
-hardware state is:
+Use that project's device deploy scripts for the Pico. The expected hardware
+state is:
 
 ```text
 MicroPython v1.28.0
@@ -186,8 +185,8 @@ effect without a physical power cycle.
 ## Pico W Polling Mode
 
 The `rp2-zoom-leds` firmware can also poll this server directly from a Pico W.
-For local testing, copy `device/secrets.example.py` to `device/secrets.py` in
-the `rp2-zoom-leds` project and set:
+For local testing, copy `rp2-zoom-leds/device/secrets.example.py` to
+`rp2-zoom-leds/device/secrets.py` and set:
 
 ```python
 WIFI_SSID = "..."
