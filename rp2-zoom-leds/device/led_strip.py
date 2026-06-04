@@ -186,7 +186,7 @@ class LedStrip:
 
     def _render_in_progress(self):
         level = 0.82 + (0.18 * self._triangle_wave(3600))
-        return self._write_color((0, 190, 105), level)
+        return self._write_color((0, 175, 145), level)
 
     def _render_ending_soon(self):
         minutes = float(self.current_command.get("minutes", 5.0))
