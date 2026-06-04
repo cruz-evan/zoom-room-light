@@ -48,7 +48,7 @@ jobs:
         run: python -m py_compile device/*.py scripts/build_ota_site.py
 
       - name: Run tests
-        run: pytest
+        run: PYTHONPATH=. pytest
 
       - name: Build OTA site dry run
         run: >
