@@ -174,7 +174,7 @@ Set the relay fields and the GitHub Pages manifest URL in `device/secrets.py`:
 ```python
 STATE_URL = "https://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/device/state"
 DEVICE_TOKEN = ""
-OTA_MANIFEST_URL = "https://YOUR_GITHUB_USER.github.io/YOUR_REPO/manifest.json"
+OTA_MANIFEST_URL = "https://cruz-evan.github.io/zoom-room-light/manifest.json"
 OTA_TOKEN = ""
 ```
 
@@ -197,20 +197,32 @@ After that, normal app changes are wireless:
    (default: 300), downloads changed files, verifies SHA-256 and size, commits
    the update, then resets.
 
-Enable the workflow in GitHub by setting the repository's Pages source to
-`GitHub Actions`. The workflow lives at
+One-time GitHub repo setup: an admin for `cruz-evan/zoom-room-light` must enable
+Pages with GitHub Actions as the build source. From an admin-authenticated `gh`
+CLI:
+
+```bash
+gh api -X POST repos/cruz-evan/zoom-room-light/pages -f build_type=workflow
+```
+
+Then rerun the OTA workflow:
+
+```bash
+gh workflow run pico-ota.yml --repo cruz-evan/zoom-room-light --ref main
+```
+
+The workflow lives at
 `.github/workflows/pico-ota.yml` in the repository root and runs its commands
 from `rp2-zoom-leds`.
 
-The default OTA base URL is:
+This repo's OTA base URL is:
 
 ```text
-https://OWNER.github.io/REPOSITORY
+https://cruz-evan.github.io/zoom-room-light
 ```
 
-If the repo uses a custom Pages URL, set a repository variable named
-`OTA_BASE_URL` to that public base URL. The Pico's `OTA_MANIFEST_URL` should be
-that base URL plus `/manifest.json`.
+The repository variable `OTA_BASE_URL` should be set to that public base URL.
+The Pico's `OTA_MANIFEST_URL` should be that base URL plus `/manifest.json`.
 
 Build the OTA site locally without publishing:
 
