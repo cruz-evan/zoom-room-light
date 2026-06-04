@@ -26,9 +26,9 @@ jobs:
       SCHEDULE_POLL_SECONDS: ${{ secrets.SCHEDULE_POLL_SECONDS }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
