@@ -2,6 +2,11 @@ import sys
 import time
 
 try:
+    import _thread
+except ImportError:
+    _thread = None
+
+try:
     import uselect as select
 except ImportError:
     import select
@@ -27,6 +32,13 @@ try:
     from telemetry import from_config as telemetry_from_config
 except Exception:
     telemetry_from_config = None
+
+
+def _sleep_ms(delay_ms):
+    if hasattr(time, "sleep_ms"):
+        time.sleep_ms(delay_ms)
+    else:
+        time.sleep(delay_ms / 1000)
 
 
 class UsbCommandReader:
@@ -70,7 +82,7 @@ def main():
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
     )
-    network = NetworkCommandReader(telemetry)
+    network = create_network_command_reader(telemetry)
 
     run_startup_self_test(strip, status, telemetry)
 
@@ -89,7 +101,7 @@ def main():
         if not strip.available:
             status.tick_heartbeat(config.STATUS_BLINK_MS)
 
-        time.sleep_ms(config.LOOP_DELAY_MS)
+        _sleep_ms(config.LOOP_DELAY_MS)
 
 
 def run_startup_self_test(strip, status, telemetry):
@@ -110,7 +122,7 @@ def run_startup_self_test(strip, status, telemetry):
             strip.tick()
             if not strip.available:
                 status.tick_heartbeat(config.STATUS_BLINK_MS)
-            time.sleep_ms(config.LOOP_DELAY_MS)
+            _sleep_ms(config.LOOP_DELAY_MS)
     telemetry.log("self_test_done")
 
 
@@ -136,6 +148,26 @@ def apply_command(strip, status, command, telemetry, source):
     return ok
 
 
+def create_network_command_reader(telemetry):
+    reader = NetworkCommandReader(telemetry)
+    thread_enabled = bool(getattr(config, "NETWORK_THREAD_ENABLED", True))
+
+    if not reader.enabled or not thread_enabled:
+        return reader
+
+    if _thread is None:
+        print("Network thread unavailable; state polling may pause animations.")
+        telemetry.log("network_thread_unavailable")
+        return reader
+
+    try:
+        return ThreadedNetworkCommandReader(reader, telemetry)
+    except Exception as exc:
+        print("Network thread unavailable:", exc)
+        telemetry.log("network_thread_error", error=str(exc))
+        return reader
+
+
 def state_summary(state):
     if not isinstance(state, dict):
         return {}
@@ -157,6 +189,52 @@ def state_summary(state):
     if "command" in state:
         summary["has_command"] = isinstance(state.get("command"), dict)
     return summary
+
+
+class ThreadedNetworkCommandReader:
+    def __init__(self, reader, telemetry):
+        self.reader = reader
+        self.telemetry = telemetry
+        self.lock = _thread.allocate_lock()
+        self.pending_command = None
+        self.idle_ms = int(getattr(config, "NETWORK_THREAD_IDLE_MS", 20))
+        _thread.start_new_thread(self._run, ())
+        print("Network polling running on background thread.")
+        self.telemetry.log("network_thread_start", idle_ms=self.idle_ms)
+
+    def pause_for_serial_override(self):
+        self.reader.pause_for_serial_override()
+        self._set_pending_command(None)
+
+    def poll(self):
+        self.lock.acquire()
+        try:
+            command = self.pending_command
+            self.pending_command = None
+            return command
+        finally:
+            self.lock.release()
+
+    def _set_pending_command(self, command):
+        self.lock.acquire()
+        try:
+            self.pending_command = command
+        finally:
+            self.lock.release()
+
+    def _run(self):
+        while True:
+            try:
+                command = self.reader.poll()
+                if command is not None and not self.reader.serial_override_active():
+                    self._set_pending_command(command)
+            except Exception as exc:
+                print("Network thread failed:", exc)
+                self.telemetry.log("network_thread_error", error=str(exc))
+                _sleep_ms(int(getattr(config, "STATE_ERROR_RETRY_SECONDS", 10) * 1000))
+                continue
+
+            _sleep_ms(self.idle_ms)
 
 
 class NetworkCommandReader:
@@ -200,12 +278,15 @@ class NetworkCommandReader:
         self.serial_pause_until_ms = time.ticks_add(time.ticks_ms(), override_seconds * 1000)
         self.telemetry.log("serial_override", seconds=override_seconds)
 
+    def serial_override_active(self):
+        return time.ticks_diff(self.serial_pause_until_ms, time.ticks_ms()) > 0
+
     def poll(self):
         if not self.enabled:
             return None
 
         now = time.ticks_ms()
-        if time.ticks_diff(self.serial_pause_until_ms, now) > 0:
+        if self.serial_override_active():
             return None
 
         ota_due = self.ota_enabled and time.ticks_diff(now, self.next_ota_check_ms) >= 0

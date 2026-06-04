@@ -10,6 +10,11 @@ except ImportError:
 
 import time
 
+try:
+    import _thread
+except ImportError:
+    _thread = None
+
 
 DEFAULT_HOST = "255.255.255.255"
 DEFAULT_PORT = 9977
@@ -29,6 +34,7 @@ class UdpTelemetry:
         self.device_id = device_id or "pico-w"
         self.sequence = 0
         self.sock = None
+        self.lock = _thread.allocate_lock() if _thread else None
 
     def close(self):
         if self.sock is not None:
@@ -42,6 +48,16 @@ class UdpTelemetry:
         if not self.enabled:
             return
 
+        if self.lock is None:
+            return self._log_unlocked(event, **fields)
+
+        self.lock.acquire()
+        try:
+            return self._log_unlocked(event, **fields)
+        finally:
+            self.lock.release()
+
+    def _log_unlocked(self, event, **fields):
         self.sequence += 1
         payload = {
             "t_ms": _ticks_ms(),
