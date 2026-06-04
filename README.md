@@ -216,3 +216,52 @@ for state in (
 PY
 python3 micropython_light/test_priority.py
 ```
+
+## Cloudflare Deployment
+
+This repo includes an early Cloudflare Containers deployment setup:
+
+```text
+.github/workflows/deploy-cloudflare.yml
+wrangler.jsonc
+cloudflare/worker.ts
+Dockerfile
+```
+
+The GitHub Action is safe to merge before Cloudflare is fully configured. It
+skips deployment until these repository secrets exist:
+
+```text
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_API_TOKEN
+```
+
+Add these GitHub repository secrets for the Zoom runtime config:
+
+```text
+ZOOM_WEBHOOK_SECRET_TOKEN
+ZOOM_ACCOUNT_ID
+ZOOM_CLIENT_ID
+ZOOM_CLIENT_SECRET
+ZOOM_SCHEDULE_USER_ID
+SCHEDULE_LOOKAHEAD_MINUTES
+SCHEDULE_POLL_SECONDS
+```
+
+Cloudflare notes:
+
+- Use an API token with Workers edit/deploy permissions scoped to the target Cloudflare account.
+- Cloudflare Containers deploy via Wrangler, which builds the `Dockerfile` image and pushes it to Cloudflare's managed registry.
+- The Worker proxies requests to the Python container, so the public Cloudflare Worker URL replaces the ngrok URL once deployed.
+- Update the Zoom webhook endpoint to:
+
+```text
+https://YOUR-CLOUDFLARE-WORKER-URL/zoom/webhook
+```
+
+Local validation:
+
+```bash
+npm install
+npm run typecheck
+```

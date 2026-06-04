@@ -1,0 +1,11 @@
+.git
+.github
+.DS_Store
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+micropython_light/config.py
+zoom_light_dashboard.png
+node_modules/
+.wrangler/

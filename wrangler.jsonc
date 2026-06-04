@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zoom-room-light",
+  "main": "cloudflare/worker.ts",
+  "compatibility_date": "2026-06-04",
+  "workers_dev": true,
+  "keep_vars": true,
+  "vars": {
+    "HOST": "0.0.0.0",
+    "PORT": "5050",
+    "ZOOM_SCHEDULE_USER_ID": "me",
+    "SCHEDULE_LOOKAHEAD_MINUTES": "15",
+    "SCHEDULE_POLL_SECONDS": "60"
+  },
+  "containers": [
+    {
+      "class_name": "ZoomRoomLightContainer",
+      "image": "./Dockerfile",
+      "max_instances": 1,
+      "instance_type": "lite"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ZOOM_ROOM_LIGHT",
+        "class_name": "ZoomRoomLightContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ZoomRoomLightContainer"]
+    }
+  ]
+}
