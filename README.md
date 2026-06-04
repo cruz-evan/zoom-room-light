@@ -171,6 +171,18 @@ The original project also includes a polling MicroPython client in
 needed for the Pico strip build because `rp2-zoom-leds` already owns the
 hardware control and reads USB serial commands.
 
+For that legacy client, `micropython_light/boot.py` can start WebREPL on the
+Pico W after Wi-Fi connects. After the initial USB setup, deploy updates over
+Wi-Fi and soft-reset MicroPython with:
+
+```bash
+WEBREPL_PASSWORD='use-a-real-password' ./scripts/deploy_micropython_webrepl.py 192.168.1.123
+```
+
+The script uploads the MicroPython files, sends `Ctrl-C` to stop the running
+loop, and sends `Ctrl-D` to soft-reset the interpreter so the new files take
+effect without a physical power cycle.
+
 ## Pico W Polling Mode
 
 The `rp2-zoom-leds` firmware can also poll this server directly from a Pico W.

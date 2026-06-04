@@ -2,6 +2,12 @@
 
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
+WIFI_TIMEOUT_SECONDS = 20
+
+# WebREPL lets you replace Python files over Wi-Fi after the first USB setup.
+# Set this to True and use a non-default password in your local config.py.
+WEBREPL_ENABLED = False
+WEBREPL_PASSWORD = ""
 
 # Use your laptop's LAN IP, not localhost.
 # Example: "http://192.168.1.42:5050/state"
