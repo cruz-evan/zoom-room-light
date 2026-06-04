@@ -30,7 +30,7 @@ function env(overrides = {}) {
     ZOOM_WEBHOOK_SECRET_TOKEN: "zoom-secret",
     DEVICE_TOKEN: "",
     ADMIN_TOKEN: "admin-token",
-    POLL_SECONDS: "60",
+    POLL_SECONDS: "5",
     ...overrides,
   };
 }
@@ -64,7 +64,7 @@ describe("Cloudflare Worker relay", () => {
     assert.deepEqual(body, {
       v: 1,
       command: { mode: "off" },
-      poll_seconds: 60,
+      poll_seconds: 5,
       updated_at: body.updated_at,
       last_event: "relay.started",
     });
