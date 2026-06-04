@@ -3,17 +3,20 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-auto}"
-MPREMOTE="${MPREMOTE:-$ROOT/.venv/bin/mpremote}"
 
-if [[ ! -x "$MPREMOTE" ]]; then
-  MPREMOTE="mpremote"
+if [[ -n "${MPREMOTE:-}" ]]; then
+  MPREMOTE_CMD=("$MPREMOTE")
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+  MPREMOTE_CMD=("$ROOT/.venv/bin/python" -m mpremote)
+else
+  MPREMOTE_CMD=("mpremote")
 fi
 
 for file in "$ROOT"/device/*.py; do
   name="$(basename "$file")"
   echo "Copying device/$name -> :$name"
-  "$MPREMOTE" connect "$PORT" fs cp "$file" ":$name"
+  "${MPREMOTE_CMD[@]}" connect "$PORT" fs cp "$file" ":$name"
 done
 
 echo "Resetting board"
-"$MPREMOTE" connect "$PORT" reset
+"${MPREMOTE_CMD[@]}" connect "$PORT" reset

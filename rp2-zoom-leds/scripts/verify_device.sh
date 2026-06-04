@@ -3,11 +3,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-auto}"
-MPREMOTE="${MPREMOTE:-$ROOT/.venv/bin/mpremote}"
 
-if [[ ! -x "$MPREMOTE" ]]; then
-  MPREMOTE="mpremote"
+if [[ -n "${MPREMOTE:-}" ]]; then
+  MPREMOTE_CMD=("$MPREMOTE")
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+  MPREMOTE_CMD=("$ROOT/.venv/bin/python" -m mpremote)
+else
+  MPREMOTE_CMD=("mpremote")
 fi
 
-exec "$MPREMOTE" connect "$PORT" exec "import sys; print(sys.implementation)"
-
+exec "${MPREMOTE_CMD[@]}" connect "$PORT" exec "import sys; print(sys.implementation)"
