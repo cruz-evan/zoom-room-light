@@ -641,7 +641,7 @@ async function listZoomScheduleMeetings(env, accessToken) {
   const results = [];
   const errors = [];
 
-  for (const loader of [listZoomUserMeetings, listZoomUpcomingMeetings]) {
+  for (const loader of [listZoomUserMeetings, listZoomUpcomingMeetings, listZoomScheduledMeetings]) {
     try {
       results.push(...(await loader(userId, accessToken)));
     } catch (error) {
@@ -649,7 +649,7 @@ async function listZoomScheduleMeetings(env, accessToken) {
     }
   }
 
-  if (!results.length && errors.length === 2) {
+  if (!results.length && errors.length === 3) {
     throw new Error(`Zoom schedule polling failed: ${errors.join("; ")}`);
   }
 
@@ -663,6 +663,30 @@ async function listZoomUserMeetings(userId, accessToken) {
   do {
     const params = new URLSearchParams({
       type: "upcoming",
+      page_size: "300",
+    });
+    if (nextPageToken) {
+      params.set("next_page_token", nextPageToken);
+    }
+
+    const json = await zoomGetJson(
+      `/users/${encodeURIComponent(userId)}/meetings?${params.toString()}`,
+      accessToken,
+    );
+    meetings.push(...arrayValue(json.meetings));
+    nextPageToken = String(json.next_page_token || "");
+  } while (nextPageToken);
+
+  return meetings;
+}
+
+async function listZoomScheduledMeetings(userId, accessToken) {
+  const meetings = [];
+  let nextPageToken = "";
+
+  do {
+    const params = new URLSearchParams({
+      type: "scheduled",
       page_size: "300",
     });
     if (nextPageToken) {
@@ -1054,6 +1078,7 @@ function constantTimeEqual(left, right) {
 
 export const testInternals = {
   hmacSha256Hex,
+  listZoomScheduleMeetings,
   scheduleStatusFromMeetings,
   stateFromScheduleStatus,
   verifyZoomSignature,

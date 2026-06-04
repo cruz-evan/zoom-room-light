@@ -311,6 +311,41 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "schedule.active_ended");
   });
 
+  it("loads scheduled meetings when upcoming endpoints are empty", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+    globalThis.fetch = async (url) => {
+      requestedUrls.push(String(url));
+      if (String(url).includes("type=scheduled")) {
+        return new Response(
+          JSON.stringify({
+            meetings: [
+              {
+                id: "ended-active",
+                topic: "Demo",
+                start_time: "2026-06-04T23:30:00Z",
+                duration: 4,
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ meetings: [] }), { status: 200 });
+    };
+
+    try {
+      const meetings = await testInternals.listZoomScheduleMeetings(env(), "token");
+      assert.deepEqual(
+        meetings.map((meeting) => meeting.id),
+        ["ended-active"],
+      );
+      assert.ok(requestedUrls.some((url) => url.includes("type=scheduled")));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("supports protected simulate endpoints for upcoming and ending soon", async () => {
     const relayEnv = env();
     const upcoming = await worker.fetch(
