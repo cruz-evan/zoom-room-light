@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local secrets and device-specific config
+.env
+micropython_light/config.py
+
+# Generated screenshots/artifacts
+zoom_light_dashboard.png
