@@ -30,7 +30,7 @@ POST /simulate/reset     protected demo state: off
 {
   "v": 1,
   "command": { "mode": "meeting_status", "state": "in_progress" },
-  "poll_seconds": 5,
+  "poll_seconds": 60,
   "updated_at": "2026-06-04T00:00:00.000Z",
   "last_event": "meeting.started"
 }

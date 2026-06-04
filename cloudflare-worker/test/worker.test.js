@@ -30,7 +30,7 @@ function env(overrides = {}) {
     ZOOM_WEBHOOK_SECRET_TOKEN: "zoom-secret",
     DEVICE_TOKEN: "",
     ADMIN_TOKEN: "admin-token",
-    POLL_SECONDS: "5",
+    POLL_SECONDS: "60",
     ...overrides,
   };
 }
@@ -64,7 +64,7 @@ describe("Cloudflare Worker relay", () => {
     assert.deepEqual(body, {
       v: 1,
       command: { mode: "off" },
-      poll_seconds: 5,
+      poll_seconds: 60,
       updated_at: body.updated_at,
       last_event: "relay.started",
     });
@@ -247,6 +247,68 @@ describe("Cloudflare Worker relay", () => {
       minutes: 5,
     });
     assert.equal(state.last_event, "schedule.ending_soon");
+  });
+
+  it("keeps an early-ended scheduled meeting off", () => {
+    const now = Date.parse("2026-06-04T20:26:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "off" },
+      in_use: false,
+      last_event: "meeting.ended",
+      source: "zoom",
+      zoom_event_ts: now - 1000,
+      meeting: { id: "ended-early", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "ended-early",
+          topic: "Demo",
+          start_time: "2026-06-04T20:00:00Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env({ ENDING_SOON_MINUTES: "5" }),
+      now,
+    );
+    const state = testInternals.stateFromScheduleStatus(schedule, current);
+
+    assert.deepEqual(state.command, { mode: "off" });
+    assert.equal(state.last_event, "meeting.ended");
+  });
+
+  it("clears active state after the scheduled end if the ended webhook is missed", () => {
+    const now = Date.parse("2026-06-04T20:31:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "ending_soon", minutes: 1 },
+      in_use: true,
+      active_meeting_id: "missed-ended",
+      active_topic: "Demo",
+      last_event: "schedule.ending_soon",
+      source: "schedule",
+      zoom_event_ts: now - 31 * 60000,
+      meeting: { id: "missed-ended", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "missed-ended",
+          topic: "Demo",
+          start_time: "2026-06-04T20:00:00Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env({ ENDING_SOON_MINUTES: "5" }),
+      now,
+    );
+    const state = testInternals.stateFromScheduleStatus(schedule, current);
+
+    assert.deepEqual(state.command, { mode: "off" });
+    assert.equal(state.last_event, "schedule.active_ended");
   });
 
   it("supports protected simulate endpoints for upcoming and ending soon", async () => {

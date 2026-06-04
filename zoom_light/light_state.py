@@ -76,6 +76,7 @@ class LightController:
         participant_key = self._participant_key(meeting)
 
         with self._lock:
+            previous = asdict(self._state)
             if event == "meeting.started":
                 self._state.in_use = True
                 self._state.active_meeting_id = meeting_id
@@ -144,6 +145,44 @@ class LightController:
         for subscriber in subscribers:
             subscriber.put(message)
 
+        self.print_transition("zoom_event", event, previous, snapshot)
+        self.print_state(snapshot)
+        self._publish_hardware(snapshot)
+        return snapshot
+
+    def clear_active_from_schedule(
+        self,
+        *,
+        meeting_id: str = "",
+        topic: str = "",
+        reason: str = "schedule.active_ended",
+    ) -> dict[str, Any]:
+        with self._lock:
+            previous = asdict(self._state)
+            if not self._state.in_use:
+                snapshot = asdict(self._state)
+                snapshot["recent_events"] = [asdict(item) for item in self._recent_events]
+                return snapshot
+
+            ended_meeting_id = meeting_id or self._state.active_meeting_id
+            ended_topic = topic or self._state.active_topic
+            self._state.in_use = False
+            self._state.active_meeting_id = ""
+            self._state.active_topic = ""
+            self._clear_end_warning()
+            self._apply_idle_color()
+            self._state.last_event = reason
+            self._state.updated_at = self._utc_now()
+            self._record_event(reason, ended_meeting_id, ended_topic)
+            snapshot = asdict(self._state)
+            snapshot["recent_events"] = [asdict(item) for item in self._recent_events]
+            message = json.dumps(snapshot)
+            subscribers = list(self._subscribers)
+
+        for subscriber in subscribers:
+            subscriber.put(message)
+
+        self.print_transition("schedule", reason, previous, snapshot)
         self.print_state(snapshot)
         self._publish_hardware(snapshot)
         return snapshot
@@ -254,6 +293,41 @@ class LightController:
             f"[{state['updated_at']}] LIGHT={state['color'].upper()} "
             f"STATUS={state['label']} EVENT={state['last_event']}{meeting}{topic}{ending}",
             flush=True,
+        )
+
+    @staticmethod
+    def print_transition(
+        source: str,
+        reason: str,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        print(
+            f"[{after['updated_at']}] TRANSITION source={source} reason={reason} "
+            f"from={LightController._state_marker(before)} "
+            f"to={LightController._state_marker(after)}",
+            flush=True,
+        )
+
+    @staticmethod
+    def _state_marker(state: dict[str, Any]) -> str:
+        if state.get("in_use"):
+            status = "active"
+        elif state.get("next_meeting_id"):
+            status = "upcoming"
+        else:
+            status = "idle"
+
+        active = state.get("active_meeting_id") or "-"
+        next_meeting = state.get("next_meeting_id") or "-"
+        ending = state.get("minutes_until_end")
+        ending_text = "-" if ending is None else f"{ending}m"
+        return (
+            f"{status}/{state.get('label', '')}"
+            f"/{state.get('color', '')}"
+            f"/active={active}"
+            f"/next={next_meeting}"
+            f"/ending={ending_text}"
         )
 
     @staticmethod

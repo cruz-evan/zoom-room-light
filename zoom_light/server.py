@@ -77,7 +77,7 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
                 {
                     "v": 1,
                     "command": command,
-                    "poll_seconds": 5,
+                    "poll_seconds": self.server.config.device_poll_seconds,
                     "updated_at": snapshot.get("updated_at", ""),
                     "last_event": snapshot.get("last_event", ""),
                 },

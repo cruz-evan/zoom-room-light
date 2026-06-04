@@ -194,7 +194,7 @@ After that, normal app changes are wireless:
 3. GitHub Actions runs tests, builds `manifest.json`, and publishes the OTA site
    with GitHub Pages.
 4. The Pico checks `OTA_MANIFEST_URL` every `OTA_CHECK_SECONDS` seconds
-   (default: 300), downloads changed files, verifies SHA-256 and size, commits
+   (default: 60), downloads changed files, verifies SHA-256 and size, commits
    the update, then resets.
 
 One-time GitHub repo setup: an admin for `cruz-evan/zoom-room-light` must enable

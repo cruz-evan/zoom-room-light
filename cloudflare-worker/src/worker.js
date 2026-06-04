@@ -1,5 +1,5 @@
 const STATE_KEY = "current-state";
-const DEFAULT_POLL_SECONDS = 5;
+const DEFAULT_POLL_SECONDS = 60;
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 const DEFAULT_SCHEDULE_LOOKAHEAD_MINUTES = 5;
 const DEFAULT_ENDING_SOON_MINUTES = 5;
@@ -18,7 +18,7 @@ export default {
     try {
       return await handleRequest(request, env);
     } catch (error) {
-      console.error(error);
+      logRelayEvent("worker_error", { error: errorMessage(error) });
       return jsonResponse({ error: "internal_error" }, 500);
     }
   },
@@ -42,6 +42,10 @@ export async function handleRequest(request, env) {
     }
 
     const state = await readState(env);
+    logRelayEvent("device_state_read", {
+      poll_seconds: pollSeconds(env),
+      state: logStateFields(state),
+    });
     return jsonResponse(deviceStateResponse(state, env));
   }
 
@@ -82,7 +86,7 @@ async function handleZoomWebhook(request, env) {
   const payload = isObject(body.payload) ? body.payload : {};
   const secretToken = env.ZOOM_WEBHOOK_SECRET_TOKEN || "";
 
-  console.log(JSON.stringify({ route: "/zoom/webhook", event: event || "missing" }));
+  logRelayEvent("zoom_webhook_received", { zoom_event: event || "missing" });
 
   if (event === "endpoint.url_validation") {
     return handleUrlValidation(payload, secretToken);
@@ -106,14 +110,26 @@ async function handleZoomWebhook(request, env) {
   const current = await readState(env);
   const state = stateFromZoomEvent(event, payload, env, zoomEventTimestamp(body.event_ts));
   if (state === null) {
+    logRelayEvent("zoom_webhook_ignored", {
+      zoom_event: event || "missing",
+      current: logStateFields(current),
+    });
     return jsonResponse({ ok: true, ignored: true, state: deviceStateResponse(current, env) });
   }
 
   if (isStaleZoomEvent(state, current)) {
+    logRelayEvent("zoom_webhook_stale", {
+      zoom_event: event || "missing",
+      current_zoom_event_ts: Number(current.zoom_event_ts || 0),
+      next_zoom_event_ts: Number(state.zoom_event_ts || 0),
+      current: logStateFields(current),
+      next: logStateFields(state),
+    });
     return jsonResponse({ ok: true, stale: true, state: deviceStateResponse(current, env) });
   }
 
   await writeState(env, state);
+  logStateTransition("zoom_webhook", current, state, { zoom_event: event || "missing" });
   return jsonResponse({ ok: true, state: deviceStateResponse(state, env) });
 }
 
@@ -146,6 +162,7 @@ async function handleSimulate(path, request, env) {
   const action = path.slice("/simulate/".length);
   const minutes = minutesFromUrl(request.url);
   const now = utcNow();
+  const previous = await readState(env);
   let state;
 
   if (action === "start") {
@@ -181,6 +198,7 @@ async function handleSimulate(path, request, env) {
   }
 
   await writeState(env, state);
+  logStateTransition("simulate", previous, state, { action });
   return jsonResponse({ ok: true, state: deviceStateResponse(state, env) });
 }
 
@@ -286,6 +304,11 @@ export async function runSchedulePoll(env, options = {}) {
   const current = await readState(env);
 
   if (!hasZoomScheduleConfig(env)) {
+    logRelayEvent("schedule_poll_skipped", {
+      reason: options.reason || "schedule",
+      error: "missing_zoom_schedule_config",
+      current: logStateFields(current),
+    });
     return {
       ok: false,
       error: "missing_zoom_schedule_config",
@@ -299,10 +322,23 @@ export async function runSchedulePoll(env, options = {}) {
     const meetings = await listZoomScheduleMeetings(env, accessToken);
     const schedule = scheduleStatusFromMeetings(meetings, current, env, options.nowMs ?? Date.now());
     const next = stateFromScheduleStatus(schedule, current);
+    const wrote = shouldWriteState(current, next);
 
-    if (shouldWriteState(current, next)) {
+    if (wrote) {
       await writeState(env, next);
     }
+
+    const responseState = wrote ? next : current;
+    logRelayEvent("schedule_poll", {
+      reason: options.reason || "schedule",
+      ok: true,
+      meeting_count: meetings.length,
+      wrote,
+      schedule: publicScheduleStatus(schedule),
+      current: logStateFields(current),
+      next: logStateFields(next),
+      state: logStateFields(responseState),
+    });
 
     return {
       ok: true,
@@ -310,10 +346,14 @@ export async function runSchedulePoll(env, options = {}) {
       checked_at: checkedAt,
       meeting_count: meetings.length,
       schedule: publicScheduleStatus(schedule),
-      state: deviceStateResponse(shouldWriteState(current, next) ? next : current, env),
+      state: deviceStateResponse(responseState, env),
     };
   } catch (error) {
-    console.error(error);
+    logRelayEvent("schedule_poll_error", {
+      reason: options.reason || "schedule",
+      error: errorMessage(error),
+      current: logStateFields(current),
+    });
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
@@ -329,6 +369,7 @@ function scheduleStatusFromMeetings(meetings, currentState, env, nowMs = Date.no
   return {
     upcoming: nextUpcomingMeeting(sortedMeetings, now, scheduleLookaheadMinutes(env)),
     ending: endingSoonMeeting(sortedMeetings, currentState, now, endingSoonMinutes(env)),
+    active_ended: activeEndedMeeting(sortedMeetings, currentState, now),
   };
 }
 
@@ -352,6 +393,19 @@ function stateFromScheduleStatus(schedule, currentState) {
         zoomEventTs,
         inUse: true,
         activeMeeting: schedule.ending.meeting,
+      });
+    }
+
+    if (schedule.active_ended || String(currentState.last_event || "") === "schedule.ending_soon") {
+      const endedMeeting = schedule.active_ended?.meeting || activeMeeting;
+      return makeStoredState({
+        command: { mode: "off" },
+        lastEvent: "schedule.active_ended",
+        updatedAt: now,
+        meeting: endedMeeting,
+        source: "schedule",
+        zoomEventTs,
+        inUse: false,
       });
     }
 
@@ -516,6 +570,39 @@ function endingSoonMeeting(meetings, currentState, now, lookaheadMinutes) {
   return null;
 }
 
+function activeEndedMeeting(meetings, currentState, now) {
+  const activeMeeting = activeMeetingFromState(currentState);
+  if (!activeMeeting.id && !activeMeeting.uuid) {
+    return null;
+  }
+
+  for (const meeting of meetings) {
+    const candidate = normalizedMeeting(meeting);
+    if (!sameMeeting(activeMeeting, candidate)) {
+      continue;
+    }
+
+    const start = parseZoomTime(meeting.start_time);
+    const durationMinutes = parsePositiveInteger(meeting.duration);
+    if (start === null || durationMinutes === null) {
+      continue;
+    }
+
+    const end = new Date(start.getTime() + durationMinutes * 60000);
+    if (end.getTime() > now.getTime()) {
+      continue;
+    }
+
+    return {
+      meeting: candidate,
+      ends_at: end.toISOString(),
+      minutes_overdue: Math.max(0, Math.floor((now.getTime() - end.getTime()) / 60000)),
+    };
+  }
+
+  return null;
+}
+
 async function getZoomAccessToken(env) {
   const now = Date.now();
   if (zoomTokenCache && zoomTokenCache.expiresAt > now + 60000) {
@@ -669,6 +756,9 @@ function publicScheduleStatus(schedule) {
       ? { minutes: schedule.upcoming.minutes, starts_at: schedule.upcoming.starts_at }
       : null,
     ending: schedule.ending ? { minutes: schedule.ending.minutes, ends_at: schedule.ending.ends_at } : null,
+    active_ended: schedule.active_ended
+      ? { minutes_overdue: schedule.active_ended.minutes_overdue, ends_at: schedule.active_ended.ends_at }
+      : null,
   };
 }
 
@@ -876,6 +966,50 @@ function zoomEventTimestamp(value) {
     return parsed;
   }
   return Date.now();
+}
+
+function logStateTransition(reason, currentState, nextState, fields = {}) {
+  logRelayEvent("state_transition", {
+    reason,
+    ...fields,
+    previous: logStateFields(currentState),
+    next: logStateFields(nextState),
+  });
+}
+
+function logRelayEvent(event, fields = {}) {
+  try {
+    console.log(JSON.stringify({ event, ...fields }));
+  } catch (error) {
+    console.log(JSON.stringify({ event, log_error: errorMessage(error) }));
+  }
+}
+
+function logStateFields(state = {}) {
+  const command = normalizeCommand(state.command);
+  return {
+    command,
+    command_state: command.mode === "meeting_status" ? command.state : command.mode,
+    last_event: String(state.last_event || ""),
+    source: String(state.source || ""),
+    updated_at: String(state.updated_at || ""),
+    age_seconds: stateAgeSeconds(state),
+    in_use: isActiveState(state),
+    active_meeting_id: String(state.active_meeting_id || ""),
+    next_meeting_id: String(state.next_meeting_id || ""),
+  };
+}
+
+function stateAgeSeconds(state) {
+  const updated = Date.parse(String(state.updated_at || ""));
+  if (!Number.isFinite(updated)) {
+    return null;
+  }
+  return Math.max(0, Math.floor((Date.now() - updated) / 1000));
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function jsonResponse(body, status = 200) {

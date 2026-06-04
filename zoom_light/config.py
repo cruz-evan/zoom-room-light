@@ -22,6 +22,7 @@ class ServerConfig:
     serial_reconnect_seconds: float
     serial_dry_run: bool
     device_token: str
+    device_poll_seconds: int
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -62,4 +63,5 @@ def load_config(host: str | None = None, port: int | None = None) -> ServerConfi
         serial_reconnect_seconds=float(os.getenv("RP2_SERIAL_RECONNECT_SECONDS", "5")),
         serial_dry_run=env_bool("RP2_SERIAL_DRY_RUN", False),
         device_token=os.getenv("DEVICE_TOKEN", ""),
+        device_poll_seconds=int(os.getenv("DEVICE_POLL_SECONDS", "60")),
     )

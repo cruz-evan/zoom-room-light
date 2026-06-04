@@ -80,6 +80,7 @@ def main():
         "boot",
         network_enabled=bool(getattr(config, "NETWORK_ENABLED", False)),
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
+        ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
     )
     network = create_network_command_reader(telemetry)
@@ -181,6 +182,10 @@ def state_summary(state):
         "minutes_until_end",
         "color",
         "label",
+        "last_event",
+        "updated_at",
+        "source",
+        "poll_seconds",
     ):
         if key in state:
             summary[key] = state.get(key)
@@ -189,6 +194,25 @@ def state_summary(state):
     if "command" in state:
         summary["has_command"] = isinstance(state.get("command"), dict)
     return summary
+
+
+def positive_seconds(value, default, minimum=1, maximum=300):
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = int(default)
+    if seconds < minimum:
+        return minimum
+    if seconds > maximum:
+        return maximum
+    return seconds
+
+
+def state_poll_seconds_from_response(state):
+    default = int(getattr(config, "STATE_POLL_SECONDS", 60))
+    if not isinstance(state, dict):
+        return default
+    return positive_seconds(state.get("poll_seconds"), default)
 
 
 class ThreadedNetworkCommandReader:
@@ -271,6 +295,8 @@ class NetworkCommandReader:
             enabled=self.enabled,
             state_enabled=self.state_enabled,
             ota_enabled=self.ota_enabled,
+            state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
+            ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         )
 
     def pause_for_serial_override(self):
@@ -339,7 +365,7 @@ class NetworkCommandReader:
             )
             self.next_ota_check_ms = time.ticks_add(
                 now,
-                int(getattr(config, "OTA_CHECK_SECONDS", 300) * 1000),
+                int(getattr(config, "OTA_CHECK_SECONDS", 60) * 1000),
             )
         except Exception as exc:
             print("OTA check failed:", exc)
@@ -361,18 +387,20 @@ class NetworkCommandReader:
             state = fetch_state(config.STATE_URL, getattr(config, "DEVICE_TOKEN", ""))
             fetched_ms = time.ticks_diff(time.ticks_ms(), started)
             state_info = state_summary(state)
+            poll_seconds = state_poll_seconds_from_response(state)
             command = command_from_state(state)
             normalized = normalize_command(command)
             self.failures = 0
             self.next_poll_ms = time.ticks_add(
                 now,
-                int(getattr(config, "STATE_POLL_SECONDS", 5) * 1000),
+                int(poll_seconds * 1000),
             )
 
             if normalized == self.last_command:
                 self.telemetry.log(
                     "state_poll",
                     changed=False,
+                    poll_seconds=poll_seconds,
                     elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
                     fetch_ms=fetched_ms,
                     state=state_info,
@@ -384,6 +412,7 @@ class NetworkCommandReader:
             self.telemetry.log(
                 "state_poll",
                 changed=True,
+                poll_seconds=poll_seconds,
                 elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
                 fetch_ms=fetched_ms,
                 state=state_info,
