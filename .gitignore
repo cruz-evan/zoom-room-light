@@ -11,11 +11,16 @@ node_modules/
 htmlcov/
 .idea/
 .vscode/
+node_modules/
+.wrangler/
 
 # Local secrets and device-specific config
 .env
 .env.*
 !.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 .envrc
 *.pem
 *.key

@@ -198,7 +198,23 @@ DEVICE_TOKEN = ""
 
 If you set `DEVICE_TOKEN` in this server's `.env`, set the same value in the
 Pico's `device/secrets.py`. The token only authorizes the board to read reduced
-LED state; Zoom account secrets stay on the server or future cloud relay.
+LED state; Zoom account secrets stay on the server or cloud relay.
+
+## Cloud Relay
+
+The laptop-free relay lives in
+[`cloudflare-worker/`](cloudflare-worker/). It is a Cloudflare Worker that:
+
+- receives `POST /zoom/webhook`,
+- answers Zoom `endpoint.url_validation`,
+- verifies Zoom `x-zm-signature` on normal webhook events,
+- polls Zoom schedules from Cloudflare Cron for `starting_soon` and `ending_soon`,
+- stores the current reduced Pico command in Workers KV,
+- exposes `GET /device/state` for Pico W polling, and
+- provides protected `/simulate/*` routes for testing without Zoom.
+
+Follow [`cloudflare-worker/README.md`](cloudflare-worker/README.md) for the KV,
+secret, deploy, Zoom, simulate, and Pico update steps.
 
 ## Checks
 
