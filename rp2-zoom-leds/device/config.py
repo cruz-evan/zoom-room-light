@@ -6,7 +6,7 @@ STATUS_BLINK_MS = 500
 
 # Power-supply bring-up aid. Disable for normal installed behavior once the
 # cloud/serial bridge is driving real meeting state.
-STARTUP_SELF_TEST = True
+STARTUP_SELF_TEST = False
 STARTUP_SELF_TEST_STEP_MS = 2500
 STARTUP_SELF_TEST_COMMANDS = (
     {"mode": "meeting_status", "state": "starting_soon", "minutes": 5},
