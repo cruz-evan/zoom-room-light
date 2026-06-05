@@ -4,16 +4,25 @@ BRIGHTNESS = 0.12
 LOOP_DELAY_MS = 20
 STATUS_BLINK_MS = 500
 
-# Power-supply bring-up aid. Disable for normal installed behavior once the
-# cloud/serial bridge is driving real meeting state.
-STARTUP_SELF_TEST = False
-STARTUP_SELF_TEST_STEP_MS = 2500
-STARTUP_SELF_TEST_COMMANDS = (
+# Runs once after startup network connectivity is confirmed, then the current
+# room state is restored. Disable for a completely quiet boot.
+STARTUP_SEQUENCE_ENABLED = True
+STARTUP_SEQUENCE_REQUIRES_NETWORK = True
+STARTUP_SEQUENCE_STEP_MS = 900
+STARTUP_SEQUENCE_COMMANDS = (
+    {"mode": "solid", "rgb": [255, 255, 255]},
+    {"mode": "pulse", "rgb": [0, 120, 255], "speed": 0.8},
+    {"mode": "meeting", "active": True, "participants": 5},
     {"mode": "meeting_status", "state": "starting_soon", "minutes": 5},
     {"mode": "meeting_status", "state": "in_progress"},
     {"mode": "meeting_status", "state": "ending_soon", "minutes": 2},
-    {"mode": "meeting_status", "state": "in_progress"},
+    {"mode": "off"},
 )
+
+# Legacy power-supply bring-up aid. Kept for local USB-only testing when needed.
+STARTUP_SELF_TEST = False
+STARTUP_SELF_TEST_STEP_MS = STARTUP_SEQUENCE_STEP_MS
+STARTUP_SELF_TEST_COMMANDS = STARTUP_SEQUENCE_COMMANDS
 
 try:
     import secrets as _secrets

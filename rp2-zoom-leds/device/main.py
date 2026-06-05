@@ -83,9 +83,12 @@ def main():
         ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
     )
-    network = create_network_command_reader(telemetry)
-
+    network_reader = NetworkCommandReader(telemetry)
+    startup_command = run_startup_sequence(strip, status, telemetry, network_reader)
+    if startup_command is not None:
+        apply_command(strip, status, startup_command, telemetry, "startup_state")
     run_startup_self_test(strip, status, telemetry)
+    network = create_network_command_reader(telemetry, network_reader)
 
     while True:
         command = reader.poll()
@@ -105,6 +108,32 @@ def main():
         _sleep_ms(config.LOOP_DELAY_MS)
 
 
+def run_startup_sequence(strip, status, telemetry, network):
+    if not getattr(config, "STARTUP_SEQUENCE_ENABLED", False):
+        return
+
+    requires_network = bool(getattr(config, "STARTUP_SEQUENCE_REQUIRES_NETWORK", True))
+    startup_command = None
+    if requires_network:
+        connected, startup_command = network.confirm_startup_connectivity()
+        if not connected:
+            telemetry.log("startup_sequence_skip", reason="network_not_confirmed")
+            return None
+
+    step_ms = int(getattr(config, "STARTUP_SEQUENCE_STEP_MS", 900))
+    commands = getattr(config, "STARTUP_SEQUENCE_COMMANDS", ())
+
+    telemetry.log(
+        "startup_sequence_start",
+        steps=len(commands),
+        step_ms=step_ms,
+        network_confirmed=requires_network,
+    )
+    _play_command_sequence(strip, status, telemetry, commands, step_ms, "startup_sequence")
+    telemetry.log("startup_sequence_done")
+    return startup_command
+
+
 def run_startup_self_test(strip, status, telemetry):
     if not getattr(config, "STARTUP_SELF_TEST", False):
         return
@@ -113,8 +142,13 @@ def run_startup_self_test(strip, status, telemetry):
     commands = getattr(config, "STARTUP_SELF_TEST_COMMANDS", ())
 
     telemetry.log("self_test_start", steps=len(commands), step_ms=step_ms)
+    _play_command_sequence(strip, status, telemetry, commands, step_ms, "self_test")
+    telemetry.log("self_test_done")
+
+
+def _play_command_sequence(strip, status, telemetry, commands, step_ms, source):
     for command in commands:
-        ok = apply_command(strip, status, command, telemetry, "self_test")
+        ok = apply_command(strip, status, command, telemetry, source)
         if ok:
             status.set(0)
 
@@ -124,7 +158,6 @@ def run_startup_self_test(strip, status, telemetry):
             if not strip.available:
                 status.tick_heartbeat(config.STATUS_BLINK_MS)
             _sleep_ms(config.LOOP_DELAY_MS)
-    telemetry.log("self_test_done")
 
 
 def apply_command(strip, status, command, telemetry, source):
@@ -149,8 +182,9 @@ def apply_command(strip, status, command, telemetry, source):
     return ok
 
 
-def create_network_command_reader(telemetry):
-    reader = NetworkCommandReader(telemetry)
+def create_network_command_reader(telemetry, reader=None):
+    if reader is None:
+        reader = NetworkCommandReader(telemetry)
     thread_enabled = bool(getattr(config, "NETWORK_THREAD_ENABLED", True))
 
     if not reader.enabled or not thread_enabled:
@@ -306,6 +340,65 @@ class NetworkCommandReader:
 
     def serial_override_active(self):
         return time.ticks_diff(self.serial_pause_until_ms, time.ticks_ms()) > 0
+
+    def confirm_startup_connectivity(self):
+        if not self.enabled:
+            return False, None
+
+        started = time.ticks_ms()
+        try:
+            self._ensure_wifi()
+
+            if self.state_enabled:
+                state = fetch_state(config.STATE_URL, getattr(config, "DEVICE_TOKEN", ""))
+                fetched_ms = time.ticks_diff(time.ticks_ms(), started)
+                state_info = state_summary(state)
+                poll_seconds = state_poll_seconds_from_response(state)
+                command = command_from_state(state)
+                normalized = normalize_command(command)
+                self.failures = 0
+                self.last_command = normalized
+                self.next_poll_ms = time.ticks_add(
+                    time.ticks_ms(),
+                    int(poll_seconds * 1000),
+                )
+                self.telemetry.log(
+                    "startup_connectivity_ok",
+                    via="state",
+                    poll_seconds=poll_seconds,
+                    elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
+                    fetch_ms=fetched_ms,
+                    state=state_info,
+                    command=normalized,
+                )
+                return True, normalized
+
+            if self.ota_enabled:
+                status = check_for_update(
+                    config.OTA_MANIFEST_URL,
+                    getattr(config, "OTA_TOKEN", ""),
+                    getattr(config, "OTA_MAX_FILE_BYTES", 65536),
+                )
+                self.next_ota_check_ms = time.ticks_add(
+                    time.ticks_ms(),
+                    int(getattr(config, "OTA_CHECK_SECONDS", 60) * 1000),
+                )
+                self.telemetry.log(
+                    "startup_connectivity_ok",
+                    via="ota",
+                    status=status,
+                    elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
+                )
+                return True, None
+        except Exception as exc:
+            self.telemetry.log(
+                "startup_connectivity_error",
+                error=str(exc),
+                elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
+            )
+            return False, None
+
+        return False, None
 
     def poll(self):
         if not self.enabled:

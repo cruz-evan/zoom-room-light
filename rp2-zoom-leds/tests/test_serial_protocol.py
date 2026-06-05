@@ -60,3 +60,12 @@ def test_invalid_mode_raises_protocol_error():
 
 def test_try_parse_line_returns_none_for_bad_json():
     assert try_parse_line("{not-json}") is None
+
+
+def test_startup_sequence_commands_cover_supported_light_modes():
+    from device import config
+
+    commands = [normalize_command(command) for command in config.STARTUP_SEQUENCE_COMMANDS]
+    modes = {command["mode"] for command in commands}
+
+    assert modes == {"solid", "pulse", "meeting", "meeting_status", "off"}

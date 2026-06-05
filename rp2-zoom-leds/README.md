@@ -31,6 +31,15 @@ The newer `meeting_status` mode is the preferred final-product contract. The hos
 - `in_progress`: calm green/teal in-meeting indication.
 - `ending_soon`: amber pulse that can become more urgent as `minutes` approaches 0.
 
+On boot, the Pico W runs a short startup sequence after network connectivity is
+confirmed. The default sequence exercises `solid`, `pulse`, `meeting`,
+`meeting_status`, and `off`, then restores the current room state fetched from
+the relay. If `STATE_URL` is unavailable but OTA is enabled, a successful OTA
+manifest check can also confirm connectivity. Configure this in
+`device/config.py` with `STARTUP_SEQUENCE_ENABLED`,
+`STARTUP_SEQUENCE_REQUIRES_NETWORK`, `STARTUP_SEQUENCE_STEP_MS`, and
+`STARTUP_SEQUENCE_COMMANDS`.
+
 ## IntelliJ Setup
 
 1. Open the `rp2-zoom-leds` folder in IntelliJ IDEA.
