@@ -11,6 +11,7 @@ from zoom_schedule import ZoomApiError, get_access_token, list_meetings, parse_z
 
 from .config import ServerConfig
 from .light_state import LightController
+from .stub_schedule import StubScheduleError, StubScheduleStore
 
 
 @dataclass(frozen=True)
@@ -41,21 +42,26 @@ class ScheduleWatcher:
     def __init__(self, config: ServerConfig, light: LightController) -> None:
         self._config = config
         self._light = light
+        self._stub_store = self._make_stub_store(config)
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="schedule-watcher", daemon=True)
         self._last_key: tuple[str, int | None, str, int | None, bool] | None = None
 
     def start(self) -> None:
-        if not self._has_credentials():
+        if not self._is_enabled():
             print(
                 "Schedule watcher disabled: set ZOOM_ACCESS_TOKEN or "
-                "ZOOM_ACCOUNT_ID/ZOOM_CLIENT_ID/ZOOM_CLIENT_SECRET.",
+                "ZOOM_ACCOUNT_ID/ZOOM_CLIENT_ID/ZOOM_CLIENT_SECRET, or set "
+                "ZOOM_SCHEDULE_SOURCE=stub and ZOOM_STUB_SCHEDULE_FILE.",
                 flush=True,
             )
             return
+        if self._stub_store is not None:
+            self._stub_store.ensure_file()
         self._thread.start()
         print(
             "Schedule watcher enabled: "
+            f"source={self._config.schedule_source} "
             f"user={self._config.schedule_user_id} "
             f"lookahead={self._config.schedule_lookahead_minutes}m "
             f"ending={self._config.ending_soon_minutes}m "
@@ -106,12 +112,15 @@ class ScheduleWatcher:
             )
 
         if status.upcoming is None:
-            self._light.update_schedule_warning(
-                meeting_id="",
-                topic="",
-                start_time="",
-                minutes_until_start=None,
-            )
+            current = self._light.snapshot()
+            has_stale_next = bool(current.get("next_meeting_id"))
+            if not snapshot.get("in_use") or has_stale_next:
+                self._light.update_schedule_warning(
+                    meeting_id="",
+                    topic="",
+                    start_time="",
+                    minutes_until_start=None,
+                )
             return
 
         self._light.update_schedule_warning(
@@ -132,15 +141,31 @@ class ScheduleWatcher:
             self._stop.wait(self._config.schedule_poll_seconds)
 
     def _schedule_status(self) -> ScheduleStatus:
-        access_token = get_access_token()
-        meetings = sort_meetings(
-            list_meetings(access_token, self._config.schedule_user_id, "upcoming")
-        )
+        meetings = self._meetings()
         now = datetime.now(timezone.utc)
         return ScheduleStatus(
             upcoming=self._next_upcoming_meeting(meetings, now),
             ending=self._ending_soon_meeting(meetings, now),
         )
+
+    def stub_meetings(self) -> list[dict[str, Any]]:
+        if self._stub_store is None:
+            raise StubScheduleError("Schedule source is not stub.")
+        return self._stub_store.read_meetings()
+
+    def replace_stub_meetings(self, meetings: Any) -> list[dict[str, Any]]:
+        if self._stub_store is None:
+            raise StubScheduleError("Schedule source is not stub.")
+        normalized = self._stub_store.write_meetings(meetings)
+        self._last_key = None
+        return normalized
+
+    def _meetings(self) -> list[dict[str, Any]]:
+        if self._stub_store is not None:
+            return self._stub_store.read_meetings()
+
+        access_token = get_access_token()
+        return sort_meetings(list_meetings(access_token, self._config.schedule_user_id, "upcoming"))
 
     def _next_upcoming_meeting(
         self, meetings: list[dict[str, Any]], now: datetime
@@ -220,7 +245,20 @@ class ScheduleWatcher:
         return f"{meeting.meeting_id or '-'}:{minutes}m"
 
     @staticmethod
-    def _has_credentials() -> bool:
+    def _make_stub_store(config: ServerConfig) -> StubScheduleStore | None:
+        if config.schedule_source != "stub":
+            return None
+        if not config.schedule_stub_file:
+            return None
+        return StubScheduleStore(config.schedule_stub_file)
+
+    def _is_enabled(self) -> bool:
+        if self._stub_store is not None:
+            return True
+        return self._has_zoom_credentials()
+
+    @staticmethod
+    def _has_zoom_credentials() -> bool:
         if os.getenv("ZOOM_ACCESS_TOKEN"):
             return True
         return all(

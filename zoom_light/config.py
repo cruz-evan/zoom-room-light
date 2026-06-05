@@ -11,6 +11,8 @@ class ServerConfig:
     port: int
     webhook_secret_token: str
     schedule_user_id: str
+    schedule_source: str
+    schedule_stub_file: str
     schedule_poll_seconds: int
     schedule_lookahead_minutes: int
     ending_soon_minutes: int
@@ -23,6 +25,7 @@ class ServerConfig:
     serial_dry_run: bool
     device_token: str
     device_poll_seconds: int
+    test_control_enabled: bool
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -47,11 +50,18 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 def load_config(host: str | None = None, port: int | None = None) -> ServerConfig:
     load_dotenv()
+    schedule_stub_file = os.getenv("ZOOM_STUB_SCHEDULE_FILE", "")
+    schedule_source = os.getenv("ZOOM_SCHEDULE_SOURCE")
+    if schedule_source is None:
+        schedule_source = "stub" if schedule_stub_file else "zoom"
+
     return ServerConfig(
         host=host or os.getenv("HOST", "0.0.0.0"),
         port=port or int(os.getenv("PORT", "5000")),
         webhook_secret_token=os.getenv("ZOOM_WEBHOOK_SECRET_TOKEN", ""),
         schedule_user_id=os.getenv("ZOOM_SCHEDULE_USER_ID") or os.getenv("ZOOM_USER_ID", "me"),
+        schedule_source=schedule_source.strip().lower(),
+        schedule_stub_file=schedule_stub_file,
         schedule_poll_seconds=int(os.getenv("SCHEDULE_POLL_SECONDS", "60")),
         schedule_lookahead_minutes=int(os.getenv("SCHEDULE_LOOKAHEAD_MINUTES", "5")),
         ending_soon_minutes=int(os.getenv("ENDING_SOON_MINUTES", "5")),
@@ -64,4 +74,5 @@ def load_config(host: str | None = None, port: int | None = None) -> ServerConfi
         serial_dry_run=env_bool("RP2_SERIAL_DRY_RUN", False),
         device_token=os.getenv("DEVICE_TOKEN", ""),
         device_poll_seconds=int(os.getenv("DEVICE_POLL_SECONDS", "60")),
+        test_control_enabled=env_bool("ZOOM_TEST_CONTROL_ENABLED", False),
     )

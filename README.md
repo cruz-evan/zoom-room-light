@@ -132,6 +132,13 @@ Demo routes:
 /simulate/clear-upcoming
 ```
 
+Test-control routes are only enabled when `ZOOM_TEST_CONTROL_ENABLED=true`:
+
+```text
+/test/schedule    list or replace the local stub schedule
+/test/zoom-event  apply a fake Zoom room event
+```
+
 ## Pico / RP2040 Hardware
 
 This repo includes the `rp2-zoom-leds` Pico firmware project:
@@ -179,14 +186,50 @@ hostname like `zoom-light-ddeeff.local` from the board's Wi-Fi MAC suffix. Set
 four-board inventory template and the USB-visible details of the board observed
 on `/dev/cu.usbmodem1101`.
 
-To test the full host-to-Pico path without real Zoom events, start the server
-and visit the demo routes in the dashboard:
+To test the full host-to-Pico path without real Zoom events, start the Wi-Fi
+stub server. This keeps the Pico on normal power and Wi-Fi, still polling the
+real `/device/state` contract, while your laptop pretends to be Zoom schedule
+and room-status input:
+
+```bash
+python3 zoom_room_stub.py serve --port 5050
+```
+
+Point the Pico's `STATE_URL` at the printed LAN URL, usually:
+
+```python
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
+```
+
+Then change the fake room state from another terminal:
+
+```bash
+python3 zoom_room_stub.py status starting-soon --starts-in 3
+python3 zoom_room_stub.py status in-progress
+python3 zoom_room_stub.py status ending-soon --ends-in 3
+python3 zoom_room_stub.py status free
+```
+
+You can also manipulate only the fake schedule and let the normal schedule
+watcher drive the warning:
+
+```bash
+python3 zoom_room_stub.py schedule upcoming --starts-in 4 --duration 20
+python3 zoom_room_stub.py schedule ending-soon --ends-in 2 --duration 10
+python3 zoom_room_stub.py schedule clear
+python3 zoom_room_stub.py scenario --step-seconds 8
+```
+
+The stub schedule is stored in ignored
+`.zoom-room-light.stub-schedule.json`. The server also exposes the dashboard, so
+you can watch the browser and the physical light agree:
 
 ```text
 http://localhost:5050/
 ```
 
-Or dry-run the JSON serial output without hardware:
+For the older USB-oriented demo route flow, start the normal server and click
+the dashboard buttons. Or dry-run the JSON serial output without hardware:
 
 ```bash
 RP2_SERIAL_ENABLED=true RP2_SERIAL_DRY_RUN=true python3 zoom_light_webhook.py --port 5050

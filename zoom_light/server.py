@@ -14,6 +14,7 @@ from .light_state import LightController
 from .schedule import ScheduleWatcher
 from .security import encrypted_validation_token, verify_zoom_signature
 from .serial_output import SerialLightOutput, command_from_state
+from .stub_schedule import StubScheduleError
 
 
 class ZoomLightServer(ThreadingHTTPServer):
@@ -65,6 +66,17 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
 
         if path == "/state":
             self.write_json(HTTPStatus.OK, self.server.light.snapshot())
+            return
+
+        if path == "/test/schedule":
+            if not self.require_test_control():
+                return
+            try:
+                meetings = self.server.schedule.stub_meetings()
+            except StubScheduleError as exc:
+                self.write_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            self.write_json(HTTPStatus.OK, {"source": "stub", "meetings": meetings})
             return
 
         device_id = self.device_id_from_request(parsed_url)
@@ -214,6 +226,13 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/test/schedule":
+            self.handle_test_schedule_update()
+            return
+        if path == "/test/zoom-event":
+            self.handle_test_zoom_event()
+            return
+
         if path != "/zoom/webhook":
             self.write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
@@ -257,6 +276,79 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
                 state = self.server.light.snapshot()
             except Exception as exc:
                 print(f"Schedule refresh after {event} failed: {exc}", flush=True)
+        self.write_json(HTTPStatus.OK, {"ok": True, "state": state})
+
+    def require_test_control(self) -> bool:
+        if self.server.config.test_control_enabled:
+            return True
+        self.write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        return False
+
+    def handle_test_schedule_update(self) -> None:
+        if not self.require_test_control():
+            return
+
+        _, body = self.read_json_body()
+        if body is None:
+            self.write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+
+        meetings = body.get("meetings") if isinstance(body, dict) else None
+        try:
+            normalized = self.server.schedule.replace_stub_meetings(meetings)
+            if body.get("refresh_schedule", True):
+                self.server.schedule.run_once()
+        except StubScheduleError as exc:
+            self.write_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except Exception as exc:
+            self.write_json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
+            return
+
+        self.write_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "meetings": normalized,
+                "state": self.server.light.snapshot(),
+            },
+        )
+
+    def handle_test_zoom_event(self) -> None:
+        if not self.require_test_control():
+            return
+
+        _, body = self.read_json_body()
+        if body is None:
+            self.write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        if not isinstance(body, dict):
+            self.write_json(HTTPStatus.BAD_REQUEST, {"error": "expected_json_object"})
+            return
+
+        event = str(body.get("event") or "")
+        if not event:
+            self.write_json(HTTPStatus.BAD_REQUEST, {"error": "missing_event"})
+            return
+
+        payload = body.get("payload") if isinstance(body.get("payload"), dict) else None
+        if payload is None:
+            meeting = body.get("meeting") if isinstance(body.get("meeting"), dict) else {}
+            if not meeting:
+                meeting = {
+                    "id": str(body.get("meeting_id") or body.get("id") or "stub-meeting"),
+                    "topic": str(body.get("topic") or "Stub meeting"),
+                }
+            payload = {"object": meeting}
+
+        state = self.server.light.update_from_zoom_event(event, payload)
+        if body.get("refresh_schedule", True):
+            try:
+                self.server.schedule.run_once()
+                state = self.server.light.snapshot()
+            except Exception as exc:
+                print(f"Test schedule refresh after {event} failed: {exc}", flush=True)
+
         self.write_json(HTTPStatus.OK, {"ok": True, "state": state})
 
     def handle_url_validation(self, payload: dict[str, Any], secret_token: str) -> None:

@@ -6,6 +6,29 @@ def _requests_module():
     return requests
 
 
+def _socket_module():
+    try:
+        import usocket as socket
+    except ImportError:
+        import socket
+    return socket
+
+
+def _set_default_timeout(seconds):
+    try:
+        socket = _socket_module()
+        socket.setdefaulttimeout(seconds)
+    except Exception:
+        pass
+
+
+def _requests_get(requests, url, headers, timeout_seconds):
+    try:
+        return requests.get(url, headers=headers, timeout=timeout_seconds)
+    except TypeError:
+        return requests.get(url, headers=headers)
+
+
 def state_url_for_device(url, device_id=""):
     if not device_id:
         return url
@@ -17,7 +40,7 @@ def state_url_for_device(url, device_id=""):
     return "%s%sdevice_id=%s" % (url, separator, device_id)
 
 
-def fetch_state(url, token="", device_id=""):
+def fetch_state(url, token="", device_id="", timeout_seconds=4):
     requests = _requests_module()
     response = None
     headers = {}
@@ -27,7 +50,13 @@ def fetch_state(url, token="", device_id=""):
         headers["X-Device-ID"] = str(device_id)
 
     try:
-        response = requests.get(state_url_for_device(url, device_id), headers=headers)
+        _set_default_timeout(timeout_seconds)
+        response = _requests_get(
+            requests,
+            state_url_for_device(url, device_id),
+            headers,
+            timeout_seconds,
+        )
         if response.status_code != 200:
             raise RuntimeError("state request failed: HTTP %s" % response.status_code)
         return response.json()

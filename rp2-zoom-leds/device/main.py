@@ -359,6 +359,7 @@ class NetworkCommandReader:
                     config.STATE_URL,
                     getattr(config, "DEVICE_TOKEN", ""),
                     getattr(config, "DEVICE_ID", ""),
+                    getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
                 )
                 fetched_ms = time.ticks_diff(time.ticks_ms(), started)
                 state_info = state_summary(state)
@@ -492,6 +493,7 @@ class NetworkCommandReader:
                 config.STATE_URL,
                 getattr(config, "DEVICE_TOKEN", ""),
                 getattr(config, "DEVICE_ID", ""),
+                getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
             )
             fetched_ms = time.ticks_diff(time.ticks_ms(), started)
             state_info = state_summary(state)
