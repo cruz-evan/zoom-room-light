@@ -152,6 +152,16 @@ curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/end"
 curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
 ```
 
+From the repository root, the compatibility stub CLI maps the old command
+words to those same `/simulate/*` routes:
+
+```bash
+ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py status starting-soon --starts-in 5
+ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py status in-progress
+ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py status ending-soon --ends-in 3
+ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py status free
+```
+
 If `DEVICE_TOKEN` is unset in Cloudflare, omit the `Authorization` header when
 reading `/device/state`.
 

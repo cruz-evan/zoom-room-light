@@ -84,10 +84,76 @@ Protected simulation routes remain available for status-indicator testing when
 ```text
 GET  /simulate/start
 GET  /simulate/end
+GET  /simulate/off
 GET  /simulate/upcoming?minutes=5
+GET  /simulate/starting-soon?minutes=5
 GET  /simulate/ending-soon?minutes=5
 POST /simulate/reset
 ```
+
+## Webhook Status Map
+
+Zoom should point at only one webhook receiver:
+
+```text
+POST /zoom/webhook
+```
+
+Subscribe the Zoom app to at least:
+
+```text
+meeting.started
+meeting.ended
+```
+
+The Worker maps webhook and schedule inputs to the reduced Pico command
+contract:
+
+| Source | Input | Pico command |
+| --- | --- | --- |
+| Zoom webhook | `meeting.started` | `{"mode":"meeting_status","state":"in_progress"}` |
+| Zoom webhook | `meeting.ended` | `{"mode":"off"}` or `starting_soon` when another meeting is already queued |
+| Schedule poll | upcoming meeting inside `SCHEDULE_LOOKAHEAD_MINUTES` | `{"mode":"meeting_status","state":"starting_soon","minutes":5}` |
+| Schedule poll | active scheduled meeting inside `ENDING_SOON_MINUTES` | `{"mode":"meeting_status","state":"ending_soon","minutes":5}` |
+
+The protected simulation routes set the same states directly:
+
+| Route | Pico command |
+| --- | --- |
+| `/simulate/upcoming?minutes=5` or `/simulate/starting-soon?minutes=5` | `meeting_status / starting_soon` |
+| `/simulate/start` | `meeting_status / in_progress` |
+| `/simulate/ending-soon?minutes=5` | `meeting_status / ending_soon` |
+| `/simulate/end`, `/simulate/off`, or `/simulate/reset` | `off` |
+
+Legacy Python stub terminology, for older notes and logs:
+
+| Stub status | Aliases | Pico command |
+| --- | --- | --- |
+| `starting-soon` | `upcoming` | `meeting_status / starting_soon` |
+| `in-progress` | `busy` | `meeting_status / in_progress` |
+| `ending-soon` | | `meeting_status / ending_soon` |
+| `free` | `ended`, `reset` | `off` |
+
+The old stub command words are available again as a compatibility CLI. For a
+local Worker stub, run:
+
+```bash
+python3 zoom_room_stub.py serve --port 5050
+```
+
+Then drive it from another terminal:
+
+```bash
+python3 zoom_room_stub.py status starting-soon --starts-in 3
+python3 zoom_room_stub.py status in-progress
+python3 zoom_room_stub.py status ending-soon --ends-in 3
+python3 zoom_room_stub.py status free
+python3 zoom_room_stub.py scenario --step-seconds 8
+```
+
+To drive the deployed Worker instead, set `ZOOM_ROOM_RELAY_URL` or pass
+`--server`. Simulation commands require `ADMIN_TOKEN`,
+`ZOOM_ROOM_ADMIN_TOKEN`, or `--admin-token`.
 
 ## Pico Firmware
 

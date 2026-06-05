@@ -27,7 +27,9 @@ htmlcov/
 *.pfx
 *secret*.json
 *credentials*.json
+.zoom-room-light.stub-schedule.json
 
 # Generated artifacts
+logs/
 rp2-zoom-leds/_site/
 rp2-zoom-leds/build/
