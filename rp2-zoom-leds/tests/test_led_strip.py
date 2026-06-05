@@ -38,8 +38,8 @@ def load_led_strip(monkeypatch, ticks):
     return importlib.import_module("device.led_strip")
 
 
-def test_starting_soon_renders_cyan_block_with_tail(monkeypatch):
-    ticks = {"now": 350}
+def test_starting_soon_renders_smooth_cyan_cue_with_tail(monkeypatch):
+    ticks = {"now": 0}
     led_strip = load_led_strip(monkeypatch, ticks)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0)
 
@@ -48,14 +48,14 @@ def test_starting_soon_renders_cyan_block_with_tail(monkeypatch):
     pixels = strip.pixels.values
     cyan = (44, 213, 252)
     background = (0, 2, 8)
-    full_block_indexes = list(range(4, 11))
-    tail_indexes = [3, 2, 1, 0, 23, 22, 21]
+    full_block_indexes = list(range(0, 7))
+    tail_indexes = list(range(14, 24))
 
     assert [index for index, pixel in enumerate(pixels) if pixel == cyan] == full_block_indexes
     assert all(pixels[index] != background for index in tail_indexes)
     assert all(pixels[index] != cyan for index in tail_indexes)
     assert all(
-        sum(pixels[tail_indexes[index]]) > sum(pixels[tail_indexes[index + 1]])
+        sum(pixels[tail_indexes[index]]) < sum(pixels[tail_indexes[index + 1]])
         for index in range(len(tail_indexes) - 1)
     )
     assert all(
@@ -63,6 +63,14 @@ def test_starting_soon_renders_cyan_block_with_tail(monkeypatch):
         for index, pixel in enumerate(pixels)
         if index not in set(full_block_indexes + tail_indexes)
     )
+
+    ticks["now"] = 34
+    strip.tick()
+
+    pixels = strip.pixels.values
+    assert pixels[7] != background
+    assert pixels[7] != cyan
+    assert sum(pixels[7]) > sum(background)
 
 
 def test_in_progress_renders_full_strip_blue_pulse(monkeypatch):
@@ -74,21 +82,21 @@ def test_in_progress_renders_full_strip_blue_pulse(monkeypatch):
 
     dim_pixels = list(strip.pixels.values)
     assert len(set(dim_pixels)) == 1
-    assert dim_pixels[0] == (10, 20, 63)
+    assert dim_pixels[0] == (11, 21, 63)
 
     ticks["now"] = 646
     strip.tick()
 
     early_pixels = list(strip.pixels.values)
     assert len(set(early_pixels)) == 1
-    assert early_pixels[0] == (15, 29, 90)
+    assert early_pixels[0] == (15, 30, 91)
 
     ticks["now"] = 1292
     strip.tick()
 
     midpoint_pixels = list(strip.pixels.values)
     assert len(set(midpoint_pixels)) == 1
-    assert midpoint_pixels[0] == (26, 51, 157)
+    assert midpoint_pixels[0] == (27, 51, 158)
 
     ticks["now"] = 2583
     strip.tick()

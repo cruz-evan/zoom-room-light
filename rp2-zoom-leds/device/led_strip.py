@@ -5,7 +5,11 @@ from machine import Pin
 import neopixel
 
 
+TWO_PI = 6.283185307179586
 IN_PROGRESS_PULSE_CYCLE_MS = 5166
+STARTING_SOON_LED_MS = 55
+STARTING_SOON_BLOCK_LEDS = 7.0
+STARTING_SOON_TAIL_LEDS = 10.0
 
 
 def _ticks_ms():
@@ -14,6 +18,27 @@ def _ticks_ms():
 
 def _ticks_diff(now, start):
     return time.ticks_diff(now, start)
+
+
+def _clamp_unit(value):
+    if value <= 0.0:
+        return 0.0
+    if value >= 1.0:
+        return 1.0
+    return value
+
+
+def _smoothstep(value):
+    value = _clamp_unit(value)
+    return value * value * (3.0 - (2.0 * value))
+
+
+def _mix_rgb(start, end, amount):
+    amount = _clamp_unit(amount)
+    return tuple(
+        int(start[index] + ((end[index] - start[index]) * amount) + 0.5)
+        for index in range(3)
+    )
 
 
 class StatusLed:
@@ -83,7 +108,7 @@ class LedStrip:
 
     def _scaled(self, rgb, multiplier=1.0):
         scale = self.brightness * multiplier
-        return tuple(int(max(0, min(255, value)) * scale) for value in rgb)
+        return tuple(int(max(0, min(255, value)) * scale + 0.5) for value in rgb)
 
     def _write_color(self, rgb, multiplier=1.0, force=False):
         if not self.available or self.pixels is None:
@@ -95,8 +120,11 @@ class LedStrip:
 
         try:
             color = self._scaled(rgb, multiplier)
-            for index in range(self.count):
-                self.pixels[index] = color
+            if hasattr(self.pixels, "fill"):
+                self.pixels.fill(color)
+            else:
+                for index in range(self.count):
+                    self.pixels[index] = color
             self.pixels.write()
             self.last_refresh_ms = now
             return True
@@ -148,13 +176,7 @@ class LedStrip:
         rgb = command.get("rgb", (0, 120, 255))
         speed = float(command.get("speed", 0.6))
         cycle_ms = max(200, int(1000 / speed))
-        elapsed = _ticks_diff(_ticks_ms(), self.pulse_started) % cycle_ms
-        half_cycle = max(1, cycle_ms // 2)
-
-        if elapsed <= half_cycle:
-            level = elapsed / half_cycle
-        else:
-            level = (cycle_ms - elapsed) / half_cycle
+        level = self._sine_wave(cycle_ms, started=self.pulse_started)
 
         return self._write_color(rgb, 0.08 + (0.92 * level), force=force)
 
@@ -184,16 +206,11 @@ class LedStrip:
             self.pixels = None
             return False
 
-    def _triangle_wave(self, cycle_ms):
-        elapsed = _ticks_diff(_ticks_ms(), self.effect_started) % cycle_ms
-        half_cycle = max(1, cycle_ms // 2)
-        if elapsed <= half_cycle:
-            return elapsed / half_cycle
-        return (cycle_ms - elapsed) / half_cycle
-
-    def _sine_wave(self, cycle_ms):
-        elapsed = _ticks_diff(_ticks_ms(), self.effect_started) % cycle_ms
-        phase = (elapsed / cycle_ms) * 6.283185307179586
+    def _sine_wave(self, cycle_ms, started=None):
+        if started is None:
+            started = self.effect_started
+        elapsed = _ticks_diff(_ticks_ms(), started) % cycle_ms
+        phase = (elapsed / cycle_ms) * TWO_PI
         return 0.5 - (0.5 * math.cos(phase))
 
     def _render_meeting_status(self, force=False):
@@ -208,24 +225,28 @@ class LedStrip:
 
     def _render_starting_soon(self, force=False):
         now = _ticks_ms()
-        head = (now // 35) % max(1, self.count)
-        block = 7
-        tail = 7
+        led_count = max(1, self.count)
+        elapsed = max(0, _ticks_diff(now, self.effect_started))
+        head = ((STARTING_SOON_BLOCK_LEDS - 1.0) + (elapsed / STARTING_SOON_LED_MS)) % led_count
+        block = min(STARTING_SOON_BLOCK_LEDS, float(led_count))
+        tail = min(STARTING_SOON_TAIL_LEDS, float(led_count))
         cyan = (44, 213, 252)
         background = (0, 2, 8)
 
         def color_at(index):
-            distance = (head - index) % self.count
+            distance = (head - index) % led_count
+            level = 0.0
             if distance < block:
-                return cyan
+                level = 1.0
             if distance < block + tail:
-                level = 1.0 - ((distance - block + 1) / (tail + 1))
-                return (
-                    int(background[0] + ((cyan[0] - background[0]) * level)),
-                    int(background[1] + ((cyan[1] - background[1]) * level)),
-                    int(background[2] + ((cyan[2] - background[2]) * level)),
-                )
-            return background
+                fade = 1.0 - ((distance - block + 1.0) / (tail + 1.0))
+                level = max(level, _smoothstep(fade))
+
+            ahead = (index - head) % led_count
+            if ahead < 1.0:
+                level = max(level, _smoothstep(1.0 - ahead))
+
+            return _mix_rgb(background, cyan, level)
 
         return self._write_pattern(color_at, force=force)
 
@@ -238,7 +259,7 @@ class LedStrip:
         threshold = max(1.0, float(self.current_command.get("threshold", 5.0)))
         urgency = 1.0 - min(max(minutes / threshold, 0.0), 1.0)
         cycle_ms = int(1300 - (800 * urgency))
-        level = 0.25 + (0.75 * self._triangle_wave(max(350, cycle_ms)))
+        level = 0.25 + (0.75 * self._sine_wave(max(350, cycle_ms)))
         red = 255
         green = int(150 - (105 * urgency))
 
