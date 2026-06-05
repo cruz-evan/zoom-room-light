@@ -3,9 +3,20 @@ import sys
 import types
 
 
-def load_config_with_secrets(**values):
+class FakeMachine:
+    @staticmethod
+    def unique_id():
+        return b"\xe6d0\xa6K*\x8d2"
+
+
+def load_config_with_secrets(machine_module=FakeMachine, **values):
     previous_secrets = sys.modules.get("secrets")
+    previous_machine = sys.modules.get("machine")
     sys.modules["secrets"] = types.SimpleNamespace(**values)
+    if machine_module is None:
+        sys.modules.pop("machine", None)
+    else:
+        sys.modules["machine"] = machine_module
     sys.modules.pop("device.config", None)
 
     try:
@@ -16,6 +27,38 @@ def load_config_with_secrets(**values):
             sys.modules.pop("secrets", None)
         else:
             sys.modules["secrets"] = previous_secrets
+        if previous_machine is None:
+            sys.modules.pop("machine", None)
+        else:
+            sys.modules["machine"] = previous_machine
+
+
+def test_auto_device_id_uses_machine_unique_id():
+    config = load_config_with_secrets(DEVICE_ID="auto")
+
+    assert config.BOARD_UNIQUE_ID == "e66430a64b2a8d32"
+    assert config.DEVICE_ID == "pico-e66430a64b2a8d32"
+
+
+def test_legacy_placeholder_device_ids_are_treated_as_auto():
+    config = load_config_with_secrets(DEVICE_ID="zoom-led-pico")
+
+    assert config.DEVICE_ID == "pico-e66430a64b2a8d32"
+
+
+def test_legacy_placeholder_telemetry_id_is_treated_as_auto():
+    config = load_config_with_secrets(
+        DEVICE_ID="auto",
+        TELEMETRY_DEVICE_ID="zoom-led-pico",
+    )
+
+    assert config.TELEMETRY_DEVICE_ID == "pico-e66430a64b2a8d32"
+
+
+def test_explicit_device_id_still_wins():
+    config = load_config_with_secrets(DEVICE_ID="board-room-a")
+
+    assert config.DEVICE_ID == "board-room-a"
 
 
 def test_led_hardware_is_selected_by_device_id():

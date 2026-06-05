@@ -56,7 +56,33 @@ def _device_hardware_float(name, default):
         return float(default)
 
 
-DEVICE_ID = str(_secret("DEVICE_ID", "pico-w"))
+def _unique_id_hex():
+    try:
+        import machine
+
+        unique_id = machine.unique_id()
+    except Exception:
+        return ""
+
+    try:
+        return "".join("%02x" % byte for byte in unique_id)
+    except Exception:
+        return ""
+
+
+def _resolved_device_id(value):
+    value = str(value or "").strip()
+    if value and value.lower() not in ("auto", "pico-w", "zoom-led-pico"):
+        return value
+
+    unique_id = _unique_id_hex()
+    if unique_id:
+        return "pico-%s" % unique_id
+    return "pico-unknown"
+
+
+BOARD_UNIQUE_ID = _unique_id_hex()
+DEVICE_ID = _resolved_device_id(_secret("DEVICE_ID", "auto"))
 ROOM_ID = str(_secret("ROOM_ID", "default-room"))
 DEVICE_HOSTNAME = str(_secret("DEVICE_HOSTNAME", "auto"))
 DEVICE_HOSTNAME_PREFIX = str(_secret("DEVICE_HOSTNAME_PREFIX", "zoom-light"))
@@ -112,4 +138,4 @@ OTA_MAX_FILE_BYTES = 65536
 TELEMETRY_ENABLED = bool(_secret("TELEMETRY_ENABLED", False))
 TELEMETRY_HOST = _secret("TELEMETRY_HOST", "255.255.255.255")
 TELEMETRY_PORT = int(_secret("TELEMETRY_PORT", 9977) or 9977)
-TELEMETRY_DEVICE_ID = _secret("TELEMETRY_DEVICE_ID", DEVICE_ID)
+TELEMETRY_DEVICE_ID = _resolved_device_id(_secret("TELEMETRY_DEVICE_ID", DEVICE_ID))

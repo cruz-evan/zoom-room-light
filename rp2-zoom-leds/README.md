@@ -122,7 +122,7 @@ Fill in:
 ```python
 WIFI_SSID = "your-wifi-name"
 WIFI_PASSWORD = "your-wifi-password"
-DEVICE_ID = "board-room-a"
+DEVICE_ID = "auto"
 ROOM_ID = "zoom-room-a"
 DEVICE_HOSTNAME = "zoom-light-board-room-a"
 DEVICE_HOSTNAME_PREFIX = "zoom-light"
@@ -132,7 +132,7 @@ DEVICE_HARDWARE = {
     "board-room-c": {"led_pin": 4, "led_count": 144},
     "board-room-d": {"led_pin": 6, "led_count": 144},
 }
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state?device_id=board-room-a"
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
 DEVICE_TOKEN = ""
 ```
 
@@ -162,7 +162,7 @@ STATE_POLL_SECONDS = 5
 Per-board differences stay in ignored `device/secrets.py` on each board:
 
 ```python
-DEVICE_ID = "board-room-a"
+DEVICE_ID = "auto"
 ROOM_ID = "zoom-room-a"
 DEVICE_HOSTNAME = "zoom-light-board-room-a"
 DEVICE_HOSTNAME_PREFIX = "zoom-light"
@@ -175,7 +175,7 @@ DEVICE_HARDWARE = {
 
 WIFI_SSID = "..."
 WIFI_PASSWORD = "..."
-STATE_URL = "https://your-relay.example.com/device/state?device_id=board-room-a"
+STATE_URL = "https://your-relay.example.com/device/state"
 DEVICE_TOKEN = "..."
 
 TELEMETRY_DEVICE_ID = DEVICE_ID
@@ -186,6 +186,19 @@ TELEMETRY_DEVICE_ID = DEVICE_ID
 `LED_COUNT` values in `device/secrets.py` still work for a one-board setup, but
 the map is preferred for four boards because it makes the `DEVICE_ID -> hardware`
 relationship explicit.
+
+`DEVICE_ID = "auto"` derives a stable board identity from
+`machine.unique_id()`, for example `pico-e66430a64b2a8d32`. Legacy placeholder
+values `pico-w` and `zoom-led-pico` are also treated as automatic IDs. Set an
+explicit `DEVICE_ID` such as `board-room-a` after assigning a board to a room, or
+use the generated `pico-...` ID as the permanent identity.
+
+When `STATE_URL` does not already include `device_id`, firmware appends the
+resolved `DEVICE_ID` automatically:
+
+```text
+https://your-relay.example.com/device/state?device_id=pico-e66430a64b2a8d32
+```
 
 `DEVICE_ID`, `ROOM_ID`, `DEVICE_HOSTNAME`, `DEVICE_HOSTNAME_PREFIX`,
 `DEVICE_HARDWARE`, and `TELEMETRY_DEVICE_ID` are overrideable from

@@ -155,7 +155,7 @@ RGB color order
 hardware in ignored `rp2-zoom-leds/device/secrets.py`:
 
 ```python
-DEVICE_ID = "board-room-a"
+DEVICE_ID = "auto"
 ROOM_ID = "zoom-room-a"
 DEVICE_HOSTNAME = "zoom-light-board-room-a"
 DEVICE_HOSTNAME_PREFIX = "zoom-light"
@@ -165,14 +165,16 @@ DEVICE_HARDWARE = {
     "board-room-c": {"led_pin": 4, "led_count": 144},
     "board-room-d": {"led_pin": 6, "led_count": 144},
 }
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state?device_id=board-room-a"
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
 TELEMETRY_DEVICE_ID = DEVICE_ID
 ```
 
 IP addresses are deployment/ops metadata only. Prefer hostnames such as
 `zoom-light-board-room-a.local` for WebREPL or `mpremote` when DHCP reservations
 are unavailable. Set `DEVICE_HOSTNAME = "auto"` to derive a unique fallback
-hostname like `zoom-light-ddeeff.local` from the board's Wi-Fi MAC suffix. See
+hostname like `zoom-light-ddeeff.local` from the board's Wi-Fi MAC suffix. Set
+`DEVICE_ID = "auto"` to derive a unique board ID like
+`pico-e66430a64b2a8d32` from `machine.unique_id()`. See
 [`rp2-zoom-leds/devices.example.json`](rp2-zoom-leds/devices.example.json) for a
 four-board inventory template and the USB-visible details of the board observed
 on `/dev/cu.usbmodem1101`.
@@ -221,7 +223,7 @@ For local testing, copy `rp2-zoom-leds/device/secrets.example.py` to
 ```python
 WIFI_SSID = "..."
 WIFI_PASSWORD = "..."
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state?device_id=board-room-a"
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
 DEVICE_TOKEN = ""
 ```
 

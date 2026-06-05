@@ -1,8 +1,9 @@
 WIFI_SSID = "your-wifi-name"
 WIFI_PASSWORD = "your-wifi-password"
 
-# Stable board identity. Keep this stable even if the board's IP changes.
-DEVICE_ID = "board-room-a"
+# Stable board identity. Keep this stable even if the board's IP changes. Use
+# "auto" to derive pico-<machine.unique_id>, or set a room name once assigned.
+DEVICE_ID = "auto"
 
 # Future Zoom Room mapping key. The relay/server maps DEVICE_ID -> ROOM_ID.
 ROOM_ID = "zoom-room-a"
@@ -28,14 +29,14 @@ DEVICE_HARDWARE = {
 # LED_COUNT = 144
 
 # Local laptop relay example:
-# STATE_URL = "http://192.168.1.42:5050/device/state?device_id=board-room-a"
+# STATE_URL = "http://192.168.1.42:5050/device/state"
 #
 # Cloud relay example:
-# STATE_URL = "https://your-relay.example.com/device/state?device_id=board-room-a"
+# STATE_URL = "https://your-relay.example.com/device/state"
 #
 # The firmware also appends device_id automatically when STATE_URL does not
 # already include it, preserving older single-device /device/state URLs.
-STATE_URL = "http://YOUR_RELAY_HOST:5050/device/state?device_id=board-room-a"
+STATE_URL = "http://YOUR_RELAY_HOST:5050/device/state"
 
 # Optional low-privilege device token for the relay.
 DEVICE_TOKEN = ""
