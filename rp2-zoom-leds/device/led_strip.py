@@ -127,11 +127,7 @@ class LedStrip:
             if not force and color == self._last_solid_color:
                 self.last_refresh_ms = now
                 return True
-            if hasattr(self.pixels, "fill"):
-                self.pixels.fill(color)
-            else:
-                for index in range(self.count):
-                    self.pixels[index] = color
+            self._fill_pixels(color)
             self.pixels.write()
             self.last_refresh_ms = now
             self._last_solid_color = color
@@ -258,11 +254,12 @@ class LedStrip:
             else:
                 for index in self._starting_soon_active:
                     if index not in levels:
-                        self.pixels[index] = background
+                        self._set_pixel(index, background)
 
             for index, level in levels.items():
-                self.pixels[index] = self._scaled(
-                    _mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)
+                self._set_pixel(
+                    index,
+                    self._scaled(_mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)),
                 )
 
             self.pixels.write()
@@ -276,11 +273,36 @@ class LedStrip:
             return False
 
     def _fill_pixels(self, color):
+        buf = getattr(self.pixels, "buf", None)
+        if buf is not None and self.count > 0:
+            bpp = len(buf) // self.count
+            encoded = self._encoded_pixel(color, bpp)
+            buf[:] = bytes(encoded) * self.count
+            return
+
         if hasattr(self.pixels, "fill"):
             self.pixels.fill(color)
             return
         for index in range(self.count):
             self.pixels[index] = color
+
+    def _set_pixel(self, index, color):
+        buf = getattr(self.pixels, "buf", None)
+        if buf is not None and self.count > 0:
+            bpp = len(buf) // self.count
+            offset = index * bpp
+            buf[offset : offset + bpp] = self._encoded_pixel(color, bpp)
+            return
+        self.pixels[index] = color
+
+    def _encoded_pixel(self, color, bpp):
+        order = getattr(self.pixels, "ORDER", (1, 0, 2, 3))
+        encoded = bytearray(bpp)
+        for index in range(min(bpp, len(color))):
+            target = order[index] if index < len(order) else index
+            if target < bpp:
+                encoded[target] = color[index]
+        return encoded
 
     def _starting_soon_levels(self, head, led_count, block, tail):
         levels = {}

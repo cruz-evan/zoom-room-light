@@ -29,9 +29,29 @@ class FakeNeoPixel:
         self.write_count += 1
 
 
-def load_led_strip(monkeypatch, ticks):
+class FakeBufferedNeoPixel:
+    ORDER = (1, 0, 2)
+
+    def __init__(self, pin, count):
+        self.pin = pin
+        self.buf = bytearray(count * 3)
+        self.set_count = 0
+        self.write_count = 0
+
+    def __setitem__(self, index, value):
+        self.set_count += 1
+        offset = index * 3
+        self.buf[offset] = value[1]
+        self.buf[offset + 1] = value[0]
+        self.buf[offset + 2] = value[2]
+
+    def write(self):
+        self.write_count += 1
+
+
+def load_led_strip(monkeypatch, ticks, pixel_class=FakeNeoPixel):
     monkeypatch.setitem(sys.modules, "machine", types.SimpleNamespace(Pin=FakePin))
-    monkeypatch.setitem(sys.modules, "neopixel", types.SimpleNamespace(NeoPixel=FakeNeoPixel))
+    monkeypatch.setitem(sys.modules, "neopixel", types.SimpleNamespace(NeoPixel=pixel_class))
     monkeypatch.setattr(time, "ticks_ms", lambda: ticks["now"], raising=False)
     monkeypatch.setattr(time, "ticks_diff", lambda now, start: now - start, raising=False)
     sys.modules.pop("device.led_strip", None)
@@ -142,6 +162,30 @@ def test_unchanged_solid_animation_frames_are_not_rewritten(monkeypatch):
     strip.tick()
 
     assert strip.pixels.write_count == writes_after_apply + 1
+
+
+def test_full_strip_colors_use_raw_buffer_when_available(monkeypatch):
+    ticks = {"now": 0}
+    led_strip = load_led_strip(monkeypatch, ticks, FakeBufferedNeoPixel)
+    strip = led_strip.LedStrip(pin=0, count=4, brightness=1.0)
+
+    strip.apply({"mode": "solid", "rgb": [10, 20, 30]})
+
+    assert strip.pixels.buf == bytearray([20, 10, 30] * 4)
+    assert strip.pixels.set_count == 0
+
+
+def test_starting_soon_uses_raw_buffer_for_moving_pixels(monkeypatch):
+    ticks = {"now": 0}
+    led_strip = load_led_strip(monkeypatch, ticks, FakeBufferedNeoPixel)
+    strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
+
+    strip.apply({"mode": "meeting_status", "state": "starting_soon", "minutes": 5})
+    ticks["now"] = 34
+    strip.tick()
+
+    assert strip.pixels.set_count == 0
+    assert strip.pixels.write_count == 3
 
 
 def test_apply_forces_new_command_without_waiting_for_next_frame(monkeypatch):
