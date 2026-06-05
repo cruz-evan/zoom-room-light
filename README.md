@@ -227,8 +227,11 @@ python3 zoom_room_stub.py status ending-soon --ends-in 3
 python3 zoom_room_stub.py status free
 ```
 
-`status` commands set the whole fake room state. You can also manipulate only
-the fake schedule and let the normal schedule watcher drive the warning:
+`status` commands set the whole fake room state. `schedule upcoming` manipulates
+the fake schedule and lets the normal schedule watcher drive the warning.
+`schedule ending-soon` is intentionally the same full-state transition as
+`status ending-soon`, because ending-soon only makes sense once the room is
+already active:
 
 ```bash
 python3 zoom_room_stub.py schedule upcoming --starts-in 4 --duration 20
