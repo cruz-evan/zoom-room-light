@@ -33,6 +33,15 @@ try:
 except Exception:
     telemetry_from_config = None
 
+try:
+    from resource_monitor import (
+        NullResourceMonitor,
+        from_config as resource_monitor_from_config,
+    )
+except Exception:
+    NullResourceMonitor = None
+    resource_monitor_from_config = None
+
 
 def _sleep_ms(delay_ms):
     if hasattr(time, "sleep_ms"):
@@ -81,6 +90,11 @@ def main():
     status = StatusLed()
     reader = UsbCommandReader()
     telemetry = telemetry_from_config(config) if telemetry_from_config else NullTelemetry()
+    resource_monitor = (
+        resource_monitor_from_config(config, telemetry)
+        if resource_monitor_from_config
+        else NullResourceMonitor()
+    )
     telemetry.log(
         "boot",
         device_id=str(getattr(config, "DEVICE_ID", "")),
@@ -93,6 +107,8 @@ def main():
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
         ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
+        resource_monitor_enabled=bool(getattr(config, "RESOURCE_MONITOR_ENABLED", False)),
+        resource_monitor_sample_seconds=int(getattr(config, "RESOURCE_MONITOR_SAMPLE_SECONDS", 0)),
     )
     network_reader = NetworkCommandReader(telemetry)
     startup_command = run_startup_sequence(strip, status, telemetry, network_reader)
@@ -102,6 +118,7 @@ def main():
     network = create_network_command_reader(telemetry, network_reader)
 
     while True:
+        loop_started_ms = time.ticks_ms()
         command = reader.poll()
         if command is not None:
             apply_command(strip, status, command, telemetry, "usb")
@@ -116,6 +133,10 @@ def main():
         if not strip.available:
             status.tick_heartbeat(config.STATUS_BLINK_MS)
 
+        resource_monitor.observe_loop(
+            time.ticks_diff(time.ticks_ms(), loop_started_ms),
+            config.LOOP_DELAY_MS,
+        )
         _sleep_ms(config.LOOP_DELAY_MS)
 
 
@@ -568,6 +589,15 @@ class NetworkCommandReader:
 class NullTelemetry:
     def log(self, event, **fields):
         pass
+
+
+if NullResourceMonitor is None:
+    class NullResourceMonitor:
+        def observe_loop(self, active_ms, sleep_ms=None):
+            pass
+
+        def log_sample(self, now_ms=None, sleep_ms=None):
+            pass
 
 
 main()

@@ -29,6 +29,18 @@ def format_event(payload: dict[str, Any], address: tuple[str, int], received_at:
         "state",
         "error",
         "ip",
+        "warning",
+        "warnings",
+        "cpu_busy_pct",
+        "cpu_peak_pct",
+        "loop_active_avg_ms",
+        "loop_active_max_ms",
+        "loop_over_budget",
+        "heap_free_bytes",
+        "heap_free_pct",
+        "gc_collect_ms",
+        "temp_c",
+        "freq_mhz",
     ):
         if key in payload:
             value = payload[key]
@@ -79,6 +91,9 @@ def listen(args: argparse.Namespace) -> None:
                 print(f"{received_at.astimezone().isoformat(timespec='seconds')} {address[0]}:{address[1]} {text}")
                 continue
 
+            if args.events and str(payload.get("event", "")) not in args.events:
+                continue
+
             if output is not None:
                 write_jsonl(output, payload, address, received_at)
 
@@ -98,6 +113,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--out", help="Optional JSONL file to append received telemetry records.")
     parser.add_argument("--raw", action="store_true", help="Print raw device JSON instead of readable lines.")
+    parser.add_argument(
+        "--event",
+        dest="events",
+        action="append",
+        help="Only print/write this event type. Repeat for multiple event names.",
+    )
     parser.add_argument("--max-bytes", type=int, default=4096)
     listen(parser.parse_args())
 
