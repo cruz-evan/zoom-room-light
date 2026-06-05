@@ -45,6 +45,7 @@ class LightController:
     def __init__(self, hardware_output: Any | None = None) -> None:
         self._state = LightState(updated_at=self._utc_now())
         self._lock = threading.Lock()
+        self._publish_lock = threading.Lock()
         self._subscribers: set[queue.Queue[str]] = set()
         self._recent_events: list[LightEvent] = []
         self._active_participants: dict[str, set[str]] = {}
@@ -85,36 +86,25 @@ class LightController:
                 self._clear_next_meeting()
                 self._apply_active_color()
             elif event == "meeting.ended":
-                if meeting_id:
-                    self._active_participants.pop(meeting_id, None)
-                self._state.in_use = False
-                self._state.active_meeting_id = ""
-                self._state.active_topic = ""
-                self._clear_end_warning()
-                self._apply_idle_color()
-            elif event == "meeting.participant_joined":
-                if meeting_id and participant_key:
-                    self._active_participants.setdefault(meeting_id, set()).add(participant_key)
-                self._state.in_use = True
-                self._state.active_meeting_id = meeting_id
-                self._clear_end_warning()
-                self._clear_next_meeting()
-                if topic:
-                    self._state.active_topic = topic
-                self._apply_active_color()
-            elif event == "meeting.participant_left":
-                if meeting_id and participant_key:
-                    self._active_participants.setdefault(meeting_id, set()).discard(participant_key)
-                remaining = len(self._active_participants.get(meeting_id, set())) if meeting_id else 0
-                if remaining == 0:
+                active_meeting_id = self._state.active_meeting_id
+                if active_meeting_id and meeting_id and meeting_id != active_meeting_id:
+                    pass
+                else:
+                    if meeting_id:
+                        self._active_participants.pop(meeting_id, None)
                     self._state.in_use = False
                     self._state.active_meeting_id = ""
                     self._state.active_topic = ""
                     self._clear_end_warning()
                     self._apply_idle_color()
-                else:
-                    self._state.in_use = True
-                    self._apply_active_color()
+            elif event == "meeting.participant_joined":
+                if meeting_id and participant_key:
+                    self._active_participants.setdefault(meeting_id, set()).add(participant_key)
+            elif event == "meeting.participant_left":
+                if meeting_id and participant_key:
+                    self._active_participants.setdefault(meeting_id, set()).discard(participant_key)
+                if meeting_id and not self._active_participants.get(meeting_id):
+                    self._active_participants.pop(meeting_id, None)
             elif event == "meeting.updated":
                 if topic:
                     self._state.active_topic = topic
@@ -146,43 +136,6 @@ class LightController:
             subscriber.put(message)
 
         self.print_transition("zoom_event", event, previous, snapshot)
-        self.print_state(snapshot)
-        self._publish_hardware(snapshot)
-        return snapshot
-
-    def clear_active_from_schedule(
-        self,
-        *,
-        meeting_id: str = "",
-        topic: str = "",
-        reason: str = "schedule.active_ended",
-    ) -> dict[str, Any]:
-        with self._lock:
-            previous = asdict(self._state)
-            if not self._state.in_use:
-                snapshot = asdict(self._state)
-                snapshot["recent_events"] = [asdict(item) for item in self._recent_events]
-                return snapshot
-
-            ended_meeting_id = meeting_id or self._state.active_meeting_id
-            ended_topic = topic or self._state.active_topic
-            self._state.in_use = False
-            self._state.active_meeting_id = ""
-            self._state.active_topic = ""
-            self._clear_end_warning()
-            self._apply_idle_color()
-            self._state.last_event = reason
-            self._state.updated_at = self._utc_now()
-            self._record_event(reason, ended_meeting_id, ended_topic)
-            snapshot = asdict(self._state)
-            snapshot["recent_events"] = [asdict(item) for item in self._recent_events]
-            message = json.dumps(snapshot)
-            subscribers = list(self._subscribers)
-
-        for subscriber in subscribers:
-            subscriber.put(message)
-
-        self.print_transition("schedule", reason, previous, snapshot)
         self.print_state(snapshot)
         self._publish_hardware(snapshot)
         return snapshot
@@ -397,6 +350,7 @@ class LightController:
         if self._hardware_output is None:
             return
         try:
-            self._hardware_output.publish(snapshot)
+            with self._publish_lock:
+                self._hardware_output.publish(self.snapshot())
         except Exception as exc:
             print(f"Hardware output failed: {exc}", flush=True)

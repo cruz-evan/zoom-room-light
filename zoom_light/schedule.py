@@ -70,17 +70,6 @@ class ScheduleWatcher:
         status = self._schedule_status()
         snapshot = self._light.snapshot()
         ending = status.ending if snapshot.get("in_use") else None
-        if ending is None and self._active_meeting_has_ended(snapshot):
-            print(
-                "Schedule watcher clearing active meeting after scheduled end: "
-                f"meeting={snapshot.get('active_meeting_id') or '-'} "
-                f"ended_at={snapshot.get('active_meeting_end_time') or '-'}",
-                flush=True,
-            )
-            snapshot = self._light.clear_active_from_schedule(
-                meeting_id=str(snapshot.get("active_meeting_id") or ""),
-                topic=str(snapshot.get("active_topic") or ""),
-            )
         key = (
             status.upcoming.meeting_id if status.upcoming else "",
             status.upcoming.minutes_until_start if status.upcoming else None,
@@ -141,16 +130,6 @@ class ScheduleWatcher:
             except Exception as exc:
                 print(f"Schedule watcher unexpected error: {exc}", flush=True)
             self._stop.wait(self._config.schedule_poll_seconds)
-
-    def _active_meeting_has_ended(self, snapshot: dict[str, Any]) -> bool:
-        if not snapshot.get("in_use"):
-            return False
-
-        parsed = parse_zoom_time(str(snapshot.get("active_meeting_end_time") or ""))
-        if parsed is None:
-            return False
-
-        return datetime.now(timezone.utc) >= parsed.astimezone(timezone.utc)
 
     def _schedule_status(self) -> ScheduleStatus:
         access_token = get_access_token()

@@ -295,7 +295,7 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "meeting.ended");
   });
 
-  it("clears active state after the scheduled end if the ended webhook is missed", () => {
+  it("keeps active state after the scheduled end until Zoom sends ended", () => {
     const now = Date.parse("2026-06-04T20:31:00Z");
     const current = {
       v: 1,
@@ -323,8 +323,8 @@ describe("Cloudflare Worker relay", () => {
     );
     const state = testInternals.stateFromScheduleStatus(schedule, current);
 
-    assert.deepEqual(state.command, { mode: "off" });
-    assert.equal(state.last_event, "schedule.active_ended");
+    assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
+    assert.equal(state.last_event, "schedule.end_clear");
   });
 
   it("loads scheduled meetings when upcoming endpoints are empty", async () => {
@@ -362,7 +362,7 @@ describe("Cloudflare Worker relay", () => {
     }
   });
 
-  it("clears schedule-owned active state when the active meeting disappears from the schedule", () => {
+  it("does not let the schedule clear active state when the meeting disappears", () => {
     const now = Date.parse("2026-06-04T20:31:00Z");
     const current = {
       v: 1,
@@ -378,8 +378,8 @@ describe("Cloudflare Worker relay", () => {
     const schedule = testInternals.scheduleStatusFromMeetings([], current, env(), now);
     const state = testInternals.stateFromScheduleStatus(schedule, current);
 
-    assert.deepEqual(state.command, { mode: "off" });
-    assert.equal(state.last_event, "schedule.active_missing");
+    assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
+    assert.equal(state.last_event, "schedule.active");
   });
 
   it("keeps fresh Zoom active state when the meeting is absent from the schedule", () => {
@@ -399,7 +399,7 @@ describe("Cloudflare Worker relay", () => {
     const state = testInternals.stateFromScheduleStatus(schedule, current);
 
     assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
-    assert.equal(state.last_event, "schedule.active");
+    assert.equal(state.last_event, "meeting.started");
   });
 
   it("supports protected simulate endpoints for upcoming and ending soon", async () => {

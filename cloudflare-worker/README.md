@@ -122,7 +122,9 @@ The Worker supports Zoom `endpoint.url_validation` and verifies
 `x-zm-signature` for normal Zoom events.
 
 Real Zoom webhooks drive `meeting.started` and `meeting.ended`. Cloudflare Cron
-drives `starting_soon` and `ending_soon` from the Zoom schedule API.
+drives `starting_soon` and `ending_soon` from the Zoom schedule API. Cron never
+turns an active meeting off; `meeting.ended` is the source of truth for that
+transition.
 
 ## Verify Without Zoom
 

@@ -98,14 +98,14 @@ meeting.ended
 meeting.created
 meeting.updated
 meeting.deleted
-meeting.participant_joined
-meeting.participant_left
 ```
 
 The schedule polling does not come from a webhook. It uses the Server-to-Server
 OAuth app to poll Zoom and send `starting_soon` when a meeting starts within
 `SCHEDULE_LOOKAHEAD_MINUTES`. If Zoom returns duration data for the active
 scheduled meeting, the server sends `ending_soon` within `ENDING_SOON_MINUTES`.
+Calendar data never turns an active meeting off; `meeting.ended` is the source
+of truth for returning the room to `free` or the next `starting_soon` warning.
 
 ## Local Routes
 
