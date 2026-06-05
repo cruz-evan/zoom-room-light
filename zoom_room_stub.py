@@ -139,9 +139,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     meeting_id = args.meeting_id or "stub-meeting"
 
     if state in ("starting-soon", "upcoming"):
-        response = post_schedule(
+        response = start_starting_soon_status(
             args.server,
-            [upcoming_meeting(meeting_id, args.topic, args.starts_in, args.duration)],
+            meeting_id,
+            args.topic,
+            args.starts_in,
+            args.duration,
         )
         print_result(response)
         return 0
@@ -163,15 +166,11 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
 
     if state in ("free", "ended"):
-        response = post_zoom_event(args.server, "meeting.ended", "", "")
+        response = set_free_status(args.server)
         print_result(response)
         return 0
 
-    response = post_json(
-        args.server,
-        "/test/zoom-event",
-        {"event": "manual.reset", "payload": {"object": {}}},
-    )
+    response = reset_room_status(args.server)
     print_result(response)
     return 0
 
@@ -201,9 +200,12 @@ def cmd_scenario(args: argparse.Namespace) -> int:
     steps = [
         (
             "starting soon",
-            lambda: post_schedule(
+            lambda: start_starting_soon_status(
                 args.server,
-                [upcoming_meeting(args.meeting_id, args.topic, args.starts_in, args.duration)],
+                args.meeting_id,
+                args.topic,
+                args.starts_in,
+                args.duration,
             ),
         ),
         (
@@ -238,6 +240,20 @@ def post_schedule(
         server_url,
         "/test/schedule",
         {"meetings": meetings, "refresh_schedule": refresh_schedule},
+    )
+
+
+def start_starting_soon_status(
+    server_url: str,
+    meeting_id: str,
+    topic: str,
+    starts_in_minutes: float,
+    duration_minutes: int,
+) -> dict[str, Any]:
+    reset_room_status(server_url, refresh_schedule=False)
+    return post_schedule(
+        server_url,
+        [upcoming_meeting(meeting_id, topic, starts_in_minutes, duration_minutes)],
     )
 
 
@@ -279,6 +295,29 @@ def start_ending_soon_status(
         meeting_id,
         topic,
         refresh_schedule=True,
+    )
+
+
+def set_free_status(server_url: str) -> dict[str, Any]:
+    post_schedule(server_url, [], refresh_schedule=False)
+    return post_zoom_event_with_refresh(
+        server_url,
+        "meeting.ended",
+        "",
+        "",
+        refresh_schedule=False,
+    )
+
+
+def reset_room_status(server_url: str, *, refresh_schedule: bool = False) -> dict[str, Any]:
+    return post_json(
+        server_url,
+        "/test/zoom-event",
+        {
+            "event": "manual.reset",
+            "payload": {"object": {}},
+            "refresh_schedule": refresh_schedule,
+        },
     )
 
 
