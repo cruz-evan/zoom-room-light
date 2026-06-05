@@ -72,7 +72,12 @@ class UsbCommandReader:
 
 
 def main():
-    strip = LedStrip(config.LED_PIN, config.LED_COUNT, config.BRIGHTNESS)
+    strip = LedStrip(
+        config.LED_PIN,
+        config.LED_COUNT,
+        config.BRIGHTNESS,
+        getattr(config, "LED_MAX_REFRESH_FPS", 30),
+    )
     status = StatusLed()
     reader = UsbCommandReader()
     telemetry = telemetry_from_config(config) if telemetry_from_config else NullTelemetry()
@@ -83,6 +88,7 @@ def main():
         hostname=str(getattr(config, "DEVICE_HOSTNAME", "")),
         led_pin=int(getattr(config, "LED_PIN", 0)),
         led_count=int(getattr(config, "LED_COUNT", 0)),
+        led_max_refresh_fps=int(getattr(config, "LED_MAX_REFRESH_FPS", 0)),
         network_enabled=bool(getattr(config, "NETWORK_ENABLED", False)),
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
         ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),

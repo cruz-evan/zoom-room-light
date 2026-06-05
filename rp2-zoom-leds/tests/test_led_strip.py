@@ -96,3 +96,36 @@ def test_in_progress_renders_full_strip_slow_blue_pulse(monkeypatch):
     peak_pixels = strip.pixels.values
     assert len(set(peak_pixels)) == 1
     assert peak_pixels[0] == (43, 82, 252)
+
+
+def test_animation_ticks_are_limited_to_max_refresh_rate(monkeypatch):
+    ticks = {"now": 0}
+    led_strip = load_led_strip(monkeypatch, ticks)
+    strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
+
+    strip.apply({"mode": "meeting_status", "state": "in_progress"})
+    writes_after_apply = strip.pixels.write_count
+
+    ticks["now"] = 33
+    strip.tick()
+
+    assert strip.pixels.write_count == writes_after_apply
+
+    ticks["now"] = 34
+    strip.tick()
+
+    assert strip.pixels.write_count == writes_after_apply + 1
+
+
+def test_apply_forces_new_command_without_waiting_for_next_frame(monkeypatch):
+    ticks = {"now": 0}
+    led_strip = load_led_strip(monkeypatch, ticks)
+    strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
+
+    strip.apply({"mode": "meeting_status", "state": "in_progress"})
+    writes_after_first_command = strip.pixels.write_count
+
+    ticks["now"] = 10
+    strip.apply({"mode": "meeting_status", "state": "ending_soon", "minutes": 2})
+
+    assert strip.pixels.write_count == writes_after_first_command + 1

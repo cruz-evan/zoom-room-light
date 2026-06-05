@@ -155,6 +155,7 @@ MicroPython v1.28.0
 WS2812/NeoPixel data on GP0
 LED_COUNT = 144
 BRIGHTNESS = 0.12
+LED_MAX_REFRESH_FPS = 30
 RGB color order
 ```
 

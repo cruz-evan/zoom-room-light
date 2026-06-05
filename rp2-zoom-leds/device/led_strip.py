@@ -42,10 +42,22 @@ class StatusLed:
             self.toggle()
 
 
+def _frame_interval_ms(max_refresh_fps):
+    try:
+        fps = int(max_refresh_fps)
+    except (TypeError, ValueError):
+        fps = 30
+    if fps <= 0:
+        return 0
+    return max(1, (1000 + fps - 1) // fps)
+
+
 class LedStrip:
-    def __init__(self, pin, count, brightness=0.35):
+    def __init__(self, pin, count, brightness=0.35, max_refresh_fps=30):
         self.count = int(count)
         self.brightness = max(0.0, min(float(brightness), 1.0))
+        self.frame_interval_ms = _frame_interval_ms(max_refresh_fps)
+        self.last_refresh_ms = None
         self.pixels = None
         self.available = False
         self.current_command = {"mode": "off"}
@@ -55,55 +67,69 @@ class LedStrip:
         try:
             self.pixels = neopixel.NeoPixel(Pin(pin, Pin.OUT), self.count)
             self.available = True
-            self.off()
+            self.off(force=True)
         except Exception:
             self.pixels = None
             self.available = False
+
+    def _refresh_due(self, force=False):
+        now = _ticks_ms()
+        if force or self.frame_interval_ms <= 0 or self.last_refresh_ms is None:
+            return True, now
+        return _ticks_diff(now, self.last_refresh_ms) >= self.frame_interval_ms, now
 
     def _scaled(self, rgb, multiplier=1.0):
         scale = self.brightness * multiplier
         return tuple(int(max(0, min(255, value)) * scale) for value in rgb)
 
-    def _write_color(self, rgb, multiplier=1.0):
+    def _write_color(self, rgb, multiplier=1.0, force=False):
         if not self.available or self.pixels is None:
             return False
+
+        due, now = self._refresh_due(force)
+        if not due:
+            return True
 
         try:
             color = self._scaled(rgb, multiplier)
             for index in range(self.count):
                 self.pixels[index] = color
             self.pixels.write()
+            self.last_refresh_ms = now
             return True
         except Exception:
             self.available = False
             self.pixels = None
             return False
 
-    def off(self):
-        return self._write_color((0, 0, 0), 1.0)
+    def off(self, force=True):
+        return self._write_color((0, 0, 0), 1.0, force=force)
 
     def apply(self, command):
         self.current_command = command
         mode = command.get("mode")
 
         if mode == "off":
-            return self.off()
+            return self.off(force=True)
 
         if mode == "solid":
-            return self._write_color(command["rgb"])
+            return self._write_color(command["rgb"], force=True)
 
         if mode == "pulse":
             self.pulse_started = _ticks_ms()
-            return self._render_pulse()
+            return self._render_pulse(force=True)
 
         if mode == "meeting_status":
             self.effect_started = _ticks_ms()
-            return self._render_meeting_status()
+            return self._render_meeting_status(force=True)
 
         if mode == "meeting":
             if not command.get("active"):
-                return self.off()
-            return self._write_color(self._meeting_rgb(command.get("participants", 0)))
+                return self.off(force=True)
+            return self._write_color(
+                self._meeting_rgb(command.get("participants", 0)),
+                force=True,
+            )
 
         return False
 
@@ -114,7 +140,7 @@ class LedStrip:
         elif mode == "meeting_status":
             self._render_meeting_status()
 
-    def _render_pulse(self):
+    def _render_pulse(self, force=False):
         command = self.current_command
         rgb = command.get("rgb", (0, 120, 255))
         speed = float(command.get("speed", 0.6))
@@ -127,7 +153,7 @@ class LedStrip:
         else:
             level = (cycle_ms - elapsed) / half_cycle
 
-        return self._write_color(rgb, 0.08 + (0.92 * level))
+        return self._write_color(rgb, 0.08 + (0.92 * level), force=force)
 
     def _meeting_rgb(self, participants):
         if participants <= 1:
@@ -136,14 +162,19 @@ class LedStrip:
             return (0, 190, 100)
         return (255, 140, 0)
 
-    def _write_pattern(self, colors):
+    def _write_pattern(self, colors, force=False):
         if not self.available or self.pixels is None:
             return False
+
+        due, now = self._refresh_due(force)
+        if not due:
+            return True
 
         try:
             for index in range(self.count):
                 self.pixels[index] = self._scaled(colors(index))
             self.pixels.write()
+            self.last_refresh_ms = now
             return True
         except Exception:
             self.available = False
@@ -162,17 +193,17 @@ class LedStrip:
         phase = (elapsed / cycle_ms) * 6.283185307179586
         return 0.5 - (0.5 * math.cos(phase))
 
-    def _render_meeting_status(self):
+    def _render_meeting_status(self, force=False):
         state = self.current_command.get("state")
         if state == "starting_soon":
-            return self._render_starting_soon()
+            return self._render_starting_soon(force=force)
         if state == "in_progress":
-            return self._render_in_progress()
+            return self._render_in_progress(force=force)
         if state == "ending_soon":
-            return self._render_ending_soon()
-        return self.off()
+            return self._render_ending_soon(force=force)
+        return self.off(force=force)
 
-    def _render_starting_soon(self):
+    def _render_starting_soon(self, force=False):
         now = _ticks_ms()
         head = (now // 35) % max(1, self.count)
         block = 7
@@ -193,13 +224,13 @@ class LedStrip:
                 )
             return background
 
-        return self._write_pattern(color_at)
+        return self._write_pattern(color_at, force=force)
 
-    def _render_in_progress(self):
+    def _render_in_progress(self, force=False):
         level = 0.25 + (0.75 * self._sine_wave(6200))
-        return self._write_color((43, 82, 252), level)
+        return self._write_color((43, 82, 252), level, force=force)
 
-    def _render_ending_soon(self):
+    def _render_ending_soon(self, force=False):
         minutes = float(self.current_command.get("minutes", 5.0))
         threshold = max(1.0, float(self.current_command.get("threshold", 5.0)))
         urgency = 1.0 - min(max(minutes / threshold, 0.0), 1.0)
@@ -208,4 +239,4 @@ class LedStrip:
         red = 255
         green = int(150 - (105 * urgency))
 
-        return self._write_color((red, green, 0), level)
+        return self._write_color((red, green, 0), level, force=force)

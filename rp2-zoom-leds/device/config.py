@@ -56,6 +56,13 @@ def _device_hardware_float(name, default):
         return float(default)
 
 
+def _secret_int(name, default):
+    try:
+        return int(_secret(name, default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def _unique_id_hex():
     try:
         import machine
@@ -90,7 +97,8 @@ DEVICE_HOSTNAME_PREFIX = str(_secret("DEVICE_HOSTNAME_PREFIX", "zoom-light"))
 LED_PIN = _device_hardware_int("LED_PIN", 0)
 LED_COUNT = _device_hardware_int("LED_COUNT", 144)
 BRIGHTNESS = _device_hardware_float("BRIGHTNESS", 0.12)
-LOOP_DELAY_MS = 20
+LED_MAX_REFRESH_FPS = _secret_int("LED_MAX_REFRESH_FPS", 30)
+LOOP_DELAY_MS = _secret_int("LOOP_DELAY_MS", 34)
 STATUS_BLINK_MS = 500
 
 # Runs once after startup network connectivity is confirmed, then the current

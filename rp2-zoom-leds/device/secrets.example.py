@@ -27,6 +27,8 @@ DEVICE_HARDWARE = {
 # Backwards-compatible single-board override if you do not use DEVICE_HARDWARE.
 # LED_PIN = 0
 # LED_COUNT = 144
+# LED_MAX_REFRESH_FPS = 30
+# LOOP_DELAY_MS = 34
 
 # Local laptop relay example:
 # STATE_URL = "http://192.168.1.42:5050/device/state"

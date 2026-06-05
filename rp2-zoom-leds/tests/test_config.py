@@ -96,3 +96,17 @@ def test_hardware_map_falls_back_to_safe_defaults_for_unknown_device():
 
     assert config.LED_PIN == 0
     assert config.LED_COUNT == 144
+
+
+def test_default_refresh_rate_is_capped_at_30fps():
+    config = load_config_with_secrets()
+
+    assert config.LED_MAX_REFRESH_FPS == 30
+    assert config.LOOP_DELAY_MS == 34
+
+
+def test_refresh_rate_settings_can_be_overridden_from_secrets():
+    config = load_config_with_secrets(LED_MAX_REFRESH_FPS=24, LOOP_DELAY_MS=42)
+
+    assert config.LED_MAX_REFRESH_FPS == 24
+    assert config.LOOP_DELAY_MS == 42

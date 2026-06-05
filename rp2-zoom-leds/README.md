@@ -167,6 +167,7 @@ Tracked defaults stay in `device/config.py`:
 ```python
 LED_COUNT = 144
 BRIGHTNESS = 0.12
+LED_MAX_REFRESH_FPS = 30
 STATE_POLL_SECONDS = 5
 ```
 
@@ -465,6 +466,7 @@ Default firmware settings live in `device/config.py`:
 - LED data pin: `GP0`
 - LED count: `144`
 - Brightness: `0.12`
+- Max LED refresh: `30 fps`
 
 The firmware blinks the onboard LED if NeoPixel setup or writes fail. A physically disconnected WS2812 strip may not be detectable by software, so use the simulator and visible LED output as the hardware acceptance test.
 

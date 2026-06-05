@@ -9,7 +9,8 @@ and WS2812 / NeoPixel LED strip before connecting the real Zoom bridge.
 - MicroPython firmware on the board
 - WS2812 / NeoPixel strip data input connected to `GP0`
 - Pico `GND` connected to LED power supply `GND`
-- Default firmware settings: `LED_COUNT = 144`, `BRIGHTNESS = 0.12`, RGB order
+- Default firmware settings: `LED_COUNT = 144`, `BRIGHTNESS = 0.12`,
+  `LED_MAX_REFRESH_FPS = 30`, RGB order
 
 ## Safety Checks
 
