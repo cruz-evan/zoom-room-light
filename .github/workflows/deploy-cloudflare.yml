@@ -1,19 +1,26 @@
-name: Deploy to Cloudflare
+name: Deploy Cloudflare Worker
 
 on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/deploy-cloudflare.yml"
+      - "cloudflare-worker/**"
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-cloudflare.yml"
+      - "cloudflare-worker/**"
   workflow_dispatch:
 
 concurrency:
-  group: cloudflare-deploy
+  group: cloudflare-worker-deploy
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  test-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -22,8 +29,15 @@ jobs:
       ZOOM_CLIENT_ID: ${{ secrets.ZOOM_CLIENT_ID }}
       ZOOM_CLIENT_SECRET: ${{ secrets.ZOOM_CLIENT_SECRET }}
       ZOOM_SCHEDULE_USER_ID: ${{ secrets.ZOOM_SCHEDULE_USER_ID }}
+      DEVICE_TOKEN: ${{ secrets.DEVICE_TOKEN }}
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+      POLL_SECONDS: ${{ secrets.POLL_SECONDS }}
       SCHEDULE_LOOKAHEAD_MINUTES: ${{ secrets.SCHEDULE_LOOKAHEAD_MINUTES }}
-      SCHEDULE_POLL_SECONDS: ${{ secrets.SCHEDULE_POLL_SECONDS }}
+      ENDING_SOON_MINUTES: ${{ secrets.ENDING_SOON_MINUTES }}
+
+    defaults:
+      run:
+        working-directory: cloudflare-worker
 
     steps:
       - uses: actions/checkout@v6
@@ -32,10 +46,22 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
 
-      - name: Check Cloudflare secrets
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Worker tests
+        run: npm test
+
+      - name: Check deployment credentials
         id: cloudflare
         run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "Cloudflare deploy skipped for pull requests."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "Cloudflare deploy skipped: add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN repository secrets."
             echo "deploy=false" >> "$GITHUB_OUTPUT"
@@ -43,15 +69,7 @@ jobs:
           fi
           echo "deploy=true" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        if: steps.cloudflare.outputs.deploy == 'true'
-        run: npm ci
-
-      - name: Typecheck Worker
-        if: steps.cloudflare.outputs.deploy == 'true'
-        run: npm run typecheck
-
-      - name: Sync Cloudflare Worker secrets
+      - name: Sync Worker secrets
         if: steps.cloudflare.outputs.deploy == 'true'
         run: |
           set -eu
@@ -71,13 +89,12 @@ jobs:
           put_secret ZOOM_CLIENT_ID "$ZOOM_CLIENT_ID"
           put_secret ZOOM_CLIENT_SECRET "$ZOOM_CLIENT_SECRET"
           put_secret ZOOM_SCHEDULE_USER_ID "$ZOOM_SCHEDULE_USER_ID"
+          put_secret DEVICE_TOKEN "$DEVICE_TOKEN"
+          put_secret ADMIN_TOKEN "$ADMIN_TOKEN"
+          put_secret POLL_SECONDS "$POLL_SECONDS"
           put_secret SCHEDULE_LOOKAHEAD_MINUTES "$SCHEDULE_LOOKAHEAD_MINUTES"
-          put_secret SCHEDULE_POLL_SECONDS "$SCHEDULE_POLL_SECONDS"
+          put_secret ENDING_SOON_MINUTES "$ENDING_SOON_MINUTES"
 
-      - name: Deploy Worker and Container
+      - name: Deploy Worker
         if: steps.cloudflare.outputs.deploy == 'true'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+        run: npx wrangler deploy
