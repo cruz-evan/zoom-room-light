@@ -63,6 +63,7 @@ class UdpTelemetry:
             "t_ms": _ticks_ms(),
             "seq": self.sequence,
             "device": self.device_id,
+            "device_id": self.device_id,
             "event": event,
         }
         payload.update(fields)
