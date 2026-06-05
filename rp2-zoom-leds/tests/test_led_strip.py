@@ -65,16 +65,20 @@ def test_starting_soon_renders_cyan_block_with_tail(monkeypatch):
     )
 
 
-def test_in_progress_renders_steady_red(monkeypatch):
+def test_in_progress_renders_full_strip_slow_blue_pulse(monkeypatch):
     ticks = {"now": 0}
     led_strip = load_led_strip(monkeypatch, ticks)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0)
 
     strip.apply({"mode": "meeting_status", "state": "in_progress"})
 
-    pixels = strip.pixels.values
-    assert len(set(pixels)) == 1
-    red, green, blue = pixels[0]
-    assert red > 200
-    assert green == 0
-    assert 0 < blue < 30
+    dim_pixels = list(strip.pixels.values)
+    assert len(set(dim_pixels)) == 1
+    assert dim_pixels[0] == (18, 34, 105)
+
+    ticks["now"] = 3100
+    strip.tick()
+
+    peak_pixels = strip.pixels.values
+    assert len(set(peak_pixels)) == 1
+    assert peak_pixels[0] == (43, 82, 252)

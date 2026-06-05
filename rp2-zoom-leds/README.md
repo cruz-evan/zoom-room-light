@@ -29,7 +29,7 @@ Supported serial commands:
 The newer `meeting_status` mode is the preferred final-product contract. The host/Zoom side decides whether a meeting is within the 5 minute start/end window, then the RP2 renders the behavior:
 
 - `starting_soon`: cyan moving block with a short tail for an impending meeting.
-- `in_progress`: steady red in-meeting indication.
+- `in_progress`: full-strip slow blue pulse for an active meeting.
 - `ending_soon`: amber pulse that can become more urgent as `minutes` approaches 0.
 
 On boot, the Pico W runs a short startup sequence after network connectivity is
