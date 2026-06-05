@@ -5,6 +5,9 @@ from machine import Pin
 import neopixel
 
 
+IN_PROGRESS_PULSE_CYCLE_MS = 5166
+
+
 def _ticks_ms():
     return time.ticks_ms()
 
@@ -196,7 +199,7 @@ class LedStrip:
         return self._write_pattern(color_at)
 
     def _render_in_progress(self):
-        level = 0.25 + (0.75 * self._sine_wave(6200))
+        level = 0.25 + (0.75 * self._sine_wave(IN_PROGRESS_PULSE_CYCLE_MS))
         return self._write_color((43, 82, 252), level)
 
     def _render_ending_soon(self):
