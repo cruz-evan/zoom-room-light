@@ -74,7 +74,21 @@ def test_in_progress_renders_full_strip_slow_blue_pulse(monkeypatch):
 
     dim_pixels = list(strip.pixels.values)
     assert len(set(dim_pixels)) == 1
-    assert dim_pixels[0] == (18, 34, 105)
+    assert dim_pixels[0] == (10, 20, 63)
+
+    ticks["now"] = 775
+    strip.tick()
+
+    early_pixels = list(strip.pixels.values)
+    assert len(set(early_pixels)) == 1
+    assert early_pixels[0] == (15, 29, 90)
+
+    ticks["now"] = 1550
+    strip.tick()
+
+    midpoint_pixels = list(strip.pixels.values)
+    assert len(set(midpoint_pixels)) == 1
+    assert midpoint_pixels[0] == (26, 51, 157)
 
     ticks["now"] = 3100
     strip.tick()

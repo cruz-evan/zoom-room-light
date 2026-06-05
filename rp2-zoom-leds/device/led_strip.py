@@ -1,3 +1,4 @@
+import math
 import time
 
 from machine import Pin
@@ -156,6 +157,11 @@ class LedStrip:
             return elapsed / half_cycle
         return (cycle_ms - elapsed) / half_cycle
 
+    def _sine_wave(self, cycle_ms):
+        elapsed = _ticks_diff(_ticks_ms(), self.effect_started) % cycle_ms
+        phase = (elapsed / cycle_ms) * 6.283185307179586
+        return 0.5 - (0.5 * math.cos(phase))
+
     def _render_meeting_status(self):
         state = self.current_command.get("state")
         if state == "starting_soon":
@@ -190,7 +196,7 @@ class LedStrip:
         return self._write_pattern(color_at)
 
     def _render_in_progress(self):
-        level = 0.42 + (0.58 * self._triangle_wave(6200))
+        level = 0.25 + (0.75 * self._sine_wave(6200))
         return self._write_color((43, 82, 252), level)
 
     def _render_ending_soon(self):
