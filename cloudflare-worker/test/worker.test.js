@@ -346,6 +346,46 @@ describe("Cloudflare Worker relay", () => {
     }
   });
 
+  it("clears schedule-owned active state when the active meeting disappears from the schedule", () => {
+    const now = Date.parse("2026-06-04T20:31:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "in_progress" },
+      in_use: true,
+      active_meeting_id: "missing-active",
+      active_topic: "Demo",
+      last_event: "schedule.active",
+      source: "schedule",
+      zoom_event_ts: now - 31 * 60000,
+      meeting: { id: "missing-active", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings([], current, env(), now);
+    const state = testInternals.stateFromScheduleStatus(schedule, current);
+
+    assert.deepEqual(state.command, { mode: "off" });
+    assert.equal(state.last_event, "schedule.active_missing");
+  });
+
+  it("keeps fresh Zoom active state when the meeting is absent from the schedule", () => {
+    const now = Date.parse("2026-06-04T20:05:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "in_progress" },
+      in_use: true,
+      active_meeting_id: "instant-active",
+      active_topic: "Demo",
+      last_event: "meeting.started",
+      source: "zoom",
+      zoom_event_ts: now - 1000,
+      meeting: { id: "instant-active", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings([], current, env(), now);
+    const state = testInternals.stateFromScheduleStatus(schedule, current);
+
+    assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
+    assert.equal(state.last_event, "schedule.active");
+  });
+
   it("supports protected simulate endpoints for upcoming and ending soon", async () => {
     const relayEnv = env();
     const upcoming = await worker.fetch(

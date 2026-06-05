@@ -370,6 +370,7 @@ function scheduleStatusFromMeetings(meetings, currentState, env, nowMs = Date.no
     upcoming: nextUpcomingMeeting(sortedMeetings, now, scheduleLookaheadMinutes(env)),
     ending: endingSoonMeeting(sortedMeetings, currentState, now, endingSoonMinutes(env)),
     active_ended: activeEndedMeeting(sortedMeetings, currentState, now),
+    active_missing: activeMeetingMissing(sortedMeetings, currentState),
   };
 }
 
@@ -403,6 +404,18 @@ function stateFromScheduleStatus(schedule, currentState) {
         lastEvent: "schedule.active_ended",
         updatedAt: now,
         meeting: endedMeeting,
+        source: "schedule",
+        zoomEventTs,
+        inUse: false,
+      });
+    }
+
+    if (schedule.active_missing && isScheduleDrivenState(currentState)) {
+      return makeStoredState({
+        command: { mode: "off" },
+        lastEvent: "schedule.active_missing",
+        updatedAt: now,
+        meeting: activeMeeting,
         source: "schedule",
         zoomEventTs,
         inUse: false,
@@ -603,6 +616,19 @@ function activeEndedMeeting(meetings, currentState, now) {
   return null;
 }
 
+function activeMeetingMissing(meetings, currentState) {
+  if (!isActiveState(currentState)) {
+    return false;
+  }
+
+  const activeMeeting = activeMeetingFromState(currentState);
+  if (!activeMeeting.id && !activeMeeting.uuid) {
+    return false;
+  }
+
+  return !meetings.some((meeting) => sameMeeting(activeMeeting, normalizedMeeting(meeting)));
+}
+
 async function getZoomAccessToken(env) {
   const now = Date.now();
   if (zoomTokenCache && zoomTokenCache.expiresAt > now + 60000) {
@@ -783,6 +809,7 @@ function publicScheduleStatus(schedule) {
     active_ended: schedule.active_ended
       ? { minutes_overdue: schedule.active_ended.minutes_overdue, ends_at: schedule.active_ended.ends_at }
       : null,
+    active_missing: Boolean(schedule.active_missing),
   };
 }
 
