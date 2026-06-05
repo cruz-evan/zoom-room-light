@@ -1,3 +1,5 @@
+import argparse
+
 import zoom_room_stub
 
 
@@ -58,3 +60,41 @@ def test_free_status_clears_schedule_before_ending_meeting(monkeypatch):
             },
         ),
     ]
+
+
+def test_schedule_ending_soon_matches_status_ending_soon(monkeypatch):
+    calls = []
+
+    def fake_post_json(server_url, path, body):
+        calls.append((server_url, path, body))
+        return {"state": {"color": "orange", "label": "ENDING SOON"}}
+
+    monkeypatch.setattr(zoom_room_stub, "post_json", fake_post_json)
+
+    result = zoom_room_stub.cmd_schedule(
+        argparse.Namespace(
+            action="ending-soon",
+            server="http://localhost:5050",
+            meeting_id=None,
+            topic="Demo",
+            starts_in=3,
+            ends_in=2,
+            duration=10,
+        )
+    )
+
+    assert result == 0
+    assert calls[0][0:2] == ("http://localhost:5050", "/test/schedule")
+    assert calls[0][2]["refresh_schedule"] is False
+    assert calls[0][2]["meetings"][0]["id"] == "stub-meeting"
+    assert calls[1] == (
+        "http://localhost:5050",
+        "/test/zoom-event",
+        {
+            "event": "meeting.started",
+            "payload": {
+                "object": {"id": "stub-meeting", "uuid": "stub-meeting", "topic": "Demo"}
+            },
+            "refresh_schedule": True,
+        },
+    )

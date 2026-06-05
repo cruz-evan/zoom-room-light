@@ -189,9 +189,15 @@ def cmd_schedule(args: argparse.Namespace) -> int:
     meeting_id = args.meeting_id or "stub-meeting"
     if args.action == "upcoming":
         meeting = upcoming_meeting(meeting_id, args.topic, args.starts_in, args.duration)
+        response = post_schedule(args.server, [meeting])
     else:
-        meeting = ending_soon_meeting(meeting_id, args.topic, args.ends_in, args.duration)
-    response = post_schedule(args.server, [meeting])
+        response = start_ending_soon_status(
+            args.server,
+            meeting_id,
+            args.topic,
+            args.ends_in,
+            args.duration,
+        )
     print_result(response)
     return 0
 
