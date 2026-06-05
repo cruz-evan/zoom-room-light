@@ -169,21 +169,23 @@ class LedStrip:
     def _render_starting_soon(self):
         now = _ticks_ms()
         head = (now // 35) % max(1, self.count)
-        tail = max(12, self.count // 5)
-        marker_gap = max(6, self.count // 12)
+        block = 7
+        tail = 7
+        cyan = (44, 213, 252)
+        background = (0, 2, 8)
 
         def color_at(index):
             distance = (head - index) % self.count
-            if distance < tail:
-                level = 1.0 - (distance / tail)
+            if distance < block:
+                return cyan
+            if distance < block + tail:
+                level = 1.0 - ((distance - block + 1) / (tail + 1))
                 return (
-                    int(22 + 233 * level),
-                    int(18 + 198 * level),
-                    int(4 + 28 * level),
+                    int(background[0] + ((cyan[0] - background[0]) * level)),
+                    int(background[1] + ((cyan[1] - background[1]) * level)),
+                    int(background[2] + ((cyan[2] - background[2]) * level)),
                 )
-            if ((index + head // 2) % marker_gap) == 0:
-                return (0, 30, 90)
-            return (0, 2, 10)
+            return background
 
         return self._write_pattern(color_at)
 

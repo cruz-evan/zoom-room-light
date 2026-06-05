@@ -38,7 +38,7 @@ def load_led_strip(monkeypatch, ticks):
     return importlib.import_module("device.led_strip")
 
 
-def test_starting_soon_renders_warm_chase(monkeypatch):
+def test_starting_soon_renders_cyan_block_with_tail(monkeypatch):
     ticks = {"now": 350}
     led_strip = load_led_strip(monkeypatch, ticks)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0)
@@ -46,9 +46,23 @@ def test_starting_soon_renders_warm_chase(monkeypatch):
     strip.apply({"mode": "meeting_status", "state": "starting_soon", "minutes": 5})
 
     pixels = strip.pixels.values
-    assert len(set(pixels)) > 2
-    assert any(red > 220 and green > 180 and blue < 60 for red, green, blue in pixels)
-    assert any(blue > red and blue > green for red, green, blue in pixels)
+    cyan = (44, 213, 252)
+    background = (0, 2, 8)
+    full_block_indexes = list(range(4, 11))
+    tail_indexes = [3, 2, 1, 0, 23, 22, 21]
+
+    assert [index for index, pixel in enumerate(pixels) if pixel == cyan] == full_block_indexes
+    assert all(pixels[index] != background for index in tail_indexes)
+    assert all(pixels[index] != cyan for index in tail_indexes)
+    assert all(
+        sum(pixels[tail_indexes[index]]) > sum(pixels[tail_indexes[index + 1]])
+        for index in range(len(tail_indexes) - 1)
+    )
+    assert all(
+        pixel == background
+        for index, pixel in enumerate(pixels)
+        if index not in set(full_block_indexes + tail_indexes)
+    )
 
 
 def test_in_progress_renders_steady_red(monkeypatch):
