@@ -6,7 +6,7 @@ import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .config import ServerConfig
 from .dashboard import DASHBOARD_HTML
@@ -56,7 +56,8 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed_url = urlparse(self.path)
+        path = parsed_url.path
 
         if path == "/":
             self.write_html(HTTPStatus.OK, DASHBOARD_HTML)
@@ -66,22 +67,23 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
             self.write_json(HTTPStatus.OK, self.server.light.snapshot())
             return
 
-        if path == "/device/state":
+        device_id = self.device_id_from_request(parsed_url)
+        if path == "/device/state" or self.is_device_state_path(parsed_url):
             if not self.authorize_device():
                 self.write_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             snapshot = self.server.light.snapshot()
             command = command_from_state(snapshot)
-            self.write_json(
-                HTTPStatus.OK,
-                {
-                    "v": 1,
-                    "command": command,
-                    "poll_seconds": self.server.config.device_poll_seconds,
-                    "updated_at": snapshot.get("updated_at", ""),
-                    "last_event": snapshot.get("last_event", ""),
-                },
-            )
+            body = {
+                "v": 1,
+                "command": command,
+                "poll_seconds": self.server.config.device_poll_seconds,
+                "updated_at": snapshot.get("updated_at", ""),
+                "last_event": snapshot.get("last_event", ""),
+            }
+            if device_id:
+                body["device_id"] = device_id
+            self.write_json(HTTPStatus.OK, body)
             return
 
         if path == "/events":
@@ -189,6 +191,26 @@ class ZoomLightHandler(BaseHTTPRequestHandler):
 
         header = self.headers.get("Authorization", "")
         return header == f"Bearer {token}"
+
+    def device_id_from_request(self, parsed_url) -> str:
+        if parsed_url.path == "/device/state":
+            query_id = parse_qs(parsed_url.query).get("device_id", [""])[0].strip()
+            if query_id:
+                return query_id
+
+            header_id = self.headers.get("X-Device-ID", "").strip()
+            if header_id:
+                return header_id
+
+        parts = [part for part in parsed_url.path.split("/") if part]
+        if len(parts) == 3 and parts[0] == "device" and parts[2] == "state":
+            return parts[1].strip()
+
+        return ""
+
+    def is_device_state_path(self, parsed_url) -> bool:
+        parts = [part for part in parsed_url.path.split("/") if part]
+        return len(parts) == 3 and parts[0] == "device" and parts[2] == "state"
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path

@@ -84,6 +84,22 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(authorized.status, 200);
   });
 
+  it("accepts device_id query metadata without changing old state behavior", async () => {
+    const response = await worker.fetch(new Request("https://relay.test/device/state?device_id=board-room-a"), env());
+    assert.equal(response.status, 200);
+    const body = await json(response);
+    assert.equal(body.device_id, "board-room-a");
+    assert.deepEqual(body.command, { mode: "off" });
+  });
+
+  it("accepts device id path metadata for future multi-room routing", async () => {
+    const response = await worker.fetch(new Request("https://relay.test/device/board-room-b/state"), env());
+    assert.equal(response.status, 200);
+    const body = await json(response);
+    assert.equal(body.device_id, "board-room-b");
+    assert.deepEqual(body.command, { mode: "off" });
+  });
+
   it("answers Zoom url validation with the expected encrypted token", async () => {
     const response = await worker.fetch(
       new Request("https://relay.test/zoom/webhook", {

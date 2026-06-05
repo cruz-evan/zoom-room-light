@@ -1,12 +1,41 @@
 WIFI_SSID = "your-wifi-name"
 WIFI_PASSWORD = "your-wifi-password"
 
+# Stable board identity. Keep this stable even if the board's IP changes.
+DEVICE_ID = "board-room-a"
+
+# Future Zoom Room mapping key. The relay/server maps DEVICE_ID -> ROOM_ID.
+ROOM_ID = "zoom-room-a"
+
+# Preferred deploy/ops hostname when DHCP reservations are unavailable. Use
+# "auto" to derive zoom-light-<wifi-mac-suffix>, or use {mac} in a template.
+# WebREPL/mpremote examples can use zoom-light-board-room-a.local.
+DEVICE_HOSTNAME = "zoom-light-board-room-a"
+DEVICE_HOSTNAME_PREFIX = "zoom-light"
+
+# Board-specific LED wiring. DEVICE_ID selects the hardware entry, so the same
+# secrets template can document all four boards without hardcoding pins in
+# tracked firmware files.
+DEVICE_HARDWARE = {
+    "board-room-a": {"led_pin": 0, "led_count": 144},
+    "board-room-b": {"led_pin": 2, "led_count": 144},
+    "board-room-c": {"led_pin": 4, "led_count": 144},
+    "board-room-d": {"led_pin": 6, "led_count": 144},
+}
+
+# Backwards-compatible single-board override if you do not use DEVICE_HARDWARE.
+# LED_PIN = 0
+# LED_COUNT = 144
+
 # Local laptop relay example:
-# STATE_URL = "http://192.168.1.42:5050/device/state"
+# STATE_URL = "http://192.168.1.42:5050/device/state?device_id=board-room-a"
 #
 # Cloud relay example:
-# STATE_URL = "https://your-relay.example.com/device/state"
-STATE_URL = "http://YOUR_RELAY_HOST:5050/device/state"
+# STATE_URL = "https://your-relay.example.com/device/state?device_id=board-room-a"
+#
+# The firmware also appends device_id automatically when STATE_URL does not
+# already include it, preserving older single-device /device/state URLs.
+STATE_URL = "http://YOUR_RELAY_HOST:5050/device/state?device_id=board-room-a"
 
 # Optional low-privilege device token for the relay.
 DEVICE_TOKEN = ""
@@ -28,4 +57,4 @@ OTA_TOKEN = ""
 TELEMETRY_ENABLED = False
 TELEMETRY_HOST = "255.255.255.255"
 TELEMETRY_PORT = 9977
-TELEMETRY_DEVICE_ID = "zoom-led-pico"
+TELEMETRY_DEVICE_ID = DEVICE_ID

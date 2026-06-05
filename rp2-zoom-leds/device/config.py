@@ -1,6 +1,69 @@
-LED_PIN = 0
-LED_COUNT = 144
-BRIGHTNESS = 0.12
+try:
+    import secrets as _secrets
+except ImportError:
+    _secrets = None
+
+
+def _secret(name, default=""):
+    if _secrets is None:
+        return default
+    return getattr(_secrets, name, default)
+
+
+def _secret_value(name):
+    if _secrets is None or not hasattr(_secrets, name):
+        return None
+    return getattr(_secrets, name)
+
+
+def _dict_value(data, name):
+    if not isinstance(data, dict):
+        return None
+    for key in (name, name.lower()):
+        if key in data:
+            return data[key]
+    return None
+
+
+def _device_hardware_value(name, default):
+    hardware = _secret("DEVICE_HARDWARE", {})
+    device_hardware = {}
+    if isinstance(hardware, dict):
+        device_hardware = hardware.get(DEVICE_ID, {}) or {}
+
+    mapped = _dict_value(device_hardware, name)
+    if mapped is not None:
+        return mapped
+
+    direct = _secret_value(name)
+    if direct is not None:
+        return direct
+
+    return default
+
+
+def _device_hardware_int(name, default):
+    try:
+        return int(_device_hardware_value(name, default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _device_hardware_float(name, default):
+    try:
+        return float(_device_hardware_value(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+DEVICE_ID = str(_secret("DEVICE_ID", "pico-w"))
+ROOM_ID = str(_secret("ROOM_ID", "default-room"))
+DEVICE_HOSTNAME = str(_secret("DEVICE_HOSTNAME", "auto"))
+DEVICE_HOSTNAME_PREFIX = str(_secret("DEVICE_HOSTNAME_PREFIX", "zoom-light"))
+
+LED_PIN = _device_hardware_int("LED_PIN", 0)
+LED_COUNT = _device_hardware_int("LED_COUNT", 144)
+BRIGHTNESS = _device_hardware_float("BRIGHTNESS", 0.12)
 LOOP_DELAY_MS = 20
 STATUS_BLINK_MS = 500
 
@@ -23,18 +86,6 @@ STARTUP_SEQUENCE_COMMANDS = (
 STARTUP_SELF_TEST = False
 STARTUP_SELF_TEST_STEP_MS = STARTUP_SEQUENCE_STEP_MS
 STARTUP_SELF_TEST_COMMANDS = STARTUP_SEQUENCE_COMMANDS
-
-try:
-    import secrets as _secrets
-except ImportError:
-    _secrets = None
-
-
-def _secret(name, default=""):
-    if _secrets is None:
-        return default
-    return getattr(_secrets, name, default)
-
 
 WIFI_SSID = _secret("WIFI_SSID")
 WIFI_PASSWORD = _secret("WIFI_PASSWORD")
@@ -61,4 +112,4 @@ OTA_MAX_FILE_BYTES = 65536
 TELEMETRY_ENABLED = bool(_secret("TELEMETRY_ENABLED", False))
 TELEMETRY_HOST = _secret("TELEMETRY_HOST", "255.255.255.255")
 TELEMETRY_PORT = int(_secret("TELEMETRY_PORT", 9977) or 9977)
-TELEMETRY_DEVICE_ID = _secret("TELEMETRY_DEVICE_ID", "pico-w")
+TELEMETRY_DEVICE_ID = _secret("TELEMETRY_DEVICE_ID", DEVICE_ID)

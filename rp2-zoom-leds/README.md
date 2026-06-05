@@ -11,6 +11,7 @@ The first milestone does not require Zoom. Run the host simulator, send fake mee
 - USB serial JSON-lines control remains available for local testing and emergency recovery.
 - GitHub Pages can publish OTA app-file bundles for wireless Pico W updates.
 - Zoom and Cloudflare secrets stay off the device. The Pico stores only Wi-Fi credentials, the relay `STATE_URL`, the optional low-privilege `DEVICE_TOKEN`, and optional OTA endpoint config in ignored `device/secrets.py`.
+- One shared firmware tree can run on multiple boards. Board identity, room mapping, hostname, and LED wiring live in ignored per-board `device/secrets.py` files.
 - `mpremote` handles REPL access, file deployment, and basic device checks.
 
 Supported serial commands:
@@ -121,7 +122,17 @@ Fill in:
 ```python
 WIFI_SSID = "your-wifi-name"
 WIFI_PASSWORD = "your-wifi-password"
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
+DEVICE_ID = "board-room-a"
+ROOM_ID = "zoom-room-a"
+DEVICE_HOSTNAME = "zoom-light-board-room-a"
+DEVICE_HOSTNAME_PREFIX = "zoom-light"
+DEVICE_HARDWARE = {
+    "board-room-a": {"led_pin": 0, "led_count": 144},
+    "board-room-b": {"led_pin": 2, "led_count": 144},
+    "board-room-c": {"led_pin": 4, "led_count": 144},
+    "board-room-d": {"led_pin": 6, "led_count": 144},
+}
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state?device_id=board-room-a"
 DEVICE_TOKEN = ""
 ```
 
@@ -130,6 +141,130 @@ Zoom OAuth credentials or the Zoom webhook secret on the Pico W.
 
 When `device/secrets.py` is missing or incomplete, network mode stays disabled
 and the board behaves as the original USB-serial LED controller.
+
+## Multi-Board Config
+
+Use `DEVICE_ID` as the stable board identity. Do not use IP address to decide
+which Zoom Room a board belongs to. The intended mapping is:
+
+```text
+DEVICE_ID -> board hardware config -> Zoom Room mapping -> current LED state
+```
+
+Tracked defaults stay in `device/config.py`:
+
+```python
+LED_COUNT = 144
+BRIGHTNESS = 0.12
+STATE_POLL_SECONDS = 5
+```
+
+Per-board differences stay in ignored `device/secrets.py` on each board:
+
+```python
+DEVICE_ID = "board-room-a"
+ROOM_ID = "zoom-room-a"
+DEVICE_HOSTNAME = "zoom-light-board-room-a"
+DEVICE_HOSTNAME_PREFIX = "zoom-light"
+DEVICE_HARDWARE = {
+    "board-room-a": {"led_pin": 0, "led_count": 144},
+    "board-room-b": {"led_pin": 2, "led_count": 144},
+    "board-room-c": {"led_pin": 4, "led_count": 144},
+    "board-room-d": {"led_pin": 6, "led_count": 144},
+}
+
+WIFI_SSID = "..."
+WIFI_PASSWORD = "..."
+STATE_URL = "https://your-relay.example.com/device/state?device_id=board-room-a"
+DEVICE_TOKEN = "..."
+
+TELEMETRY_DEVICE_ID = DEVICE_ID
+```
+
+`DEVICE_HARDWARE` is keyed by `DEVICE_ID`; the selected entry supplies
+`LED_PIN`, `LED_COUNT`, and optional `BRIGHTNESS`. Direct `LED_PIN` and
+`LED_COUNT` values in `device/secrets.py` still work for a one-board setup, but
+the map is preferred for four boards because it makes the `DEVICE_ID -> hardware`
+relationship explicit.
+
+`DEVICE_ID`, `ROOM_ID`, `DEVICE_HOSTNAME`, `DEVICE_HOSTNAME_PREFIX`,
+`DEVICE_HARDWARE`, and `TELEMETRY_DEVICE_ID` are overrideable from
+`device/secrets.py`. This lets the same tracked firmware run on all four boards
+while each board keeps its own LED pin and room assignment.
+
+`DEVICE_HOSTNAME = "auto"` derives a unique hostname from the Wi-Fi MAC address
+suffix, using `DEVICE_HOSTNAME_PREFIX`. For example, a board whose Wi-Fi MAC
+ends in `dd:ee:ff` becomes:
+
+```text
+zoom-light-ddeeff.local
+```
+
+You can also use a template:
+
+```python
+DEVICE_HOSTNAME = "zoom-light-{mac}"
+```
+
+Use a MAC-derived hostname when you need uniqueness before assigning a room.
+Use an explicit room-friendly hostname like `zoom-light-board-room-a` once the
+board is installed in a known room.
+
+`devices.example.json` is a tracked inventory template for four boards. It is
+documentation/sample config only; do not put private tokens or Zoom OAuth
+credentials in it. IP addresses in that file are operational metadata for
+deployment, WebREPL, telemetry, and troubleshooting. They are not identity.
+
+When DHCP reservations are unavailable, prefer a stable hostname per board and
+resolve it with DNS/mDNS:
+
+```bash
+mpremote connect zoom-light-board-room-a.local exec "import sys; print(sys.implementation)"
+mpremote connect zoom-light-ddeeff.local exec "import sys; print(sys.implementation)"
+```
+
+For WebREPL or other deployment tooling, use names like:
+
+```text
+zoom-light-board-room-a.local
+zoom-light-board-room-b.local
+zoom-light-board-room-c.local
+zoom-light-board-room-d.local
+```
+
+If hostname lookup is unavailable, run the telemetry listener and use telemetry
+as a fallback `DEVICE_ID -> current IP` discovery source. Firmware boot and
+Wi-Fi events include the stable `DEVICE_ID`; Wi-Fi connection telemetry includes
+the current LAN IP.
+
+The current relay still returns the same single reduced LED state for all
+boards. It now accepts both future addressing forms as extension points:
+
+```text
+/device/state?device_id=board-room-a
+/device/board-room-a/state
+```
+
+Future relay routing should use `DEVICE_ID` to find `ROOM_ID` or the Zoom Room
+mapping and return only that room's LED command.
+
+Observed USB board during this implementation:
+
+```text
+port: /dev/cu.usbmodem1101
+usb_vendor: MicroPython
+usb_product: Board in FS mode
+usb_vid: 0x2e8a
+usb_pid: 0x0005
+usb_serial: e66430a64b2a8d32
+tracked_default_led_pin: 0
+tracked_default_led_count: 144
+```
+
+`mpremote` could not read the live on-board config because the serial port was
+not available for opening during the probe. The inventory records the USB-visible
+hardware facts and the tracked firmware defaults; confirm any physical LED pin
+differences in each board's local `device/secrets.py`.
 
 ## On-Device Telemetry
 
@@ -149,7 +284,7 @@ In local `device/secrets.py`, enable telemetry:
 TELEMETRY_ENABLED = True
 TELEMETRY_HOST = "255.255.255.255"
 TELEMETRY_PORT = 9977
-TELEMETRY_DEVICE_ID = "zoom-led-pico"
+TELEMETRY_DEVICE_ID = DEVICE_ID
 ```
 
 Broadcast is convenient because the Pico does not need to know your laptop IP.

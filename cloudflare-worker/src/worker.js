@@ -36,17 +36,19 @@ export async function handleRequest(request, env) {
     return jsonResponse({ ok: true });
   }
 
-  if (request.method === "GET" && path === "/device/state") {
+  const deviceId = deviceIdFromRequest(request, url, path);
+  if (request.method === "GET" && deviceId !== null) {
     if (!authorizeBearer(request, env.DEVICE_TOKEN)) {
       return jsonResponse({ error: "unauthorized" }, 401);
     }
 
     const state = await readState(env);
     logRelayEvent("device_state_read", {
+      device_id: deviceId,
       poll_seconds: pollSeconds(env),
       state: logStateFields(state),
     });
-    return jsonResponse(deviceStateResponse(state, env));
+    return jsonResponse(deviceStateResponse(state, env, deviceId));
   }
 
   if ((request.method === "GET" || request.method === "POST") && path === "/schedule/check") {
@@ -463,14 +465,31 @@ function stateFromScheduleStatus(schedule, currentState) {
   return currentState;
 }
 
-function deviceStateResponse(state, env) {
-  return {
+function deviceStateResponse(state, env, deviceId = "") {
+  const response = {
     v: 1,
     command: normalizeCommand(state.command),
     poll_seconds: pollSeconds(env),
     updated_at: String(state.updated_at || ""),
     last_event: String(state.last_event || ""),
   };
+  if (deviceId) {
+    response.device_id = deviceId;
+  }
+  return response;
+}
+
+function deviceIdFromRequest(request, url, path) {
+  if (path === "/device/state") {
+    return String(url.searchParams.get("device_id") || request.headers.get("x-device-id") || "").trim();
+  }
+
+  const match = path.match(/^\/device\/([^/]+)\/state$/);
+  if (!match) {
+    return null;
+  }
+
+  return decodeURIComponent(match[1]).trim();
 }
 
 function makeStoredState({

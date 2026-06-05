@@ -1,0 +1,57 @@
+{
+  "notes": {
+    "identity": "DEVICE_ID is the stable board identity. IP addresses are deploy/ops metadata only.",
+    "hostname": "Prefer DEVICE_HOSTNAME.local for WebREPL/mpremote deployment when DHCP reservations are unavailable.",
+    "telemetry": "Telemetry can provide a fallback DEVICE_ID -> current IP mapping for troubleshooting.",
+    "current_usb_board": {
+      "observed_on": "2026-06-04",
+      "port": "/dev/cu.usbmodem1101",
+      "usb_vendor": "MicroPython",
+      "usb_product": "Board in FS mode",
+      "usb_vid": "0x2e8a",
+      "usb_pid": "0x0005",
+      "usb_serial": "e66430a64b2a8d32",
+      "live_config_read": "not_available_serial_port_busy",
+      "tracked_default_led_pin": 0,
+      "tracked_default_led_count": 144
+    }
+  },
+  "devices": {
+    "board-room-a": {
+      "name": "Room A",
+      "hostname": "zoom-light-board-room-a",
+      "mdns": "zoom-light-board-room-a.local",
+      "ip": "192.168.1.31",
+      "led_pin": 0,
+      "led_count": 144,
+      "zoom_room_id": "future-zoom-room-id-a"
+    },
+    "board-room-b": {
+      "name": "Room B",
+      "hostname": "zoom-light-board-room-b",
+      "mdns": "zoom-light-board-room-b.local",
+      "ip": "192.168.1.32",
+      "led_pin": 2,
+      "led_count": 144,
+      "zoom_room_id": "future-zoom-room-id-b"
+    },
+    "board-room-c": {
+      "name": "Room C",
+      "hostname": "zoom-light-board-room-c",
+      "mdns": "zoom-light-board-room-c.local",
+      "ip": "192.168.1.33",
+      "led_pin": 4,
+      "led_count": 144,
+      "zoom_room_id": "future-zoom-room-id-c"
+    },
+    "board-room-d": {
+      "name": "Room D",
+      "hostname": "zoom-light-board-room-d",
+      "mdns": "zoom-light-board-room-d.local",
+      "ip": "192.168.1.34",
+      "led_pin": 6,
+      "led_count": 144,
+      "zoom_room_id": "future-zoom-room-id-d"
+    }
+  }
+}

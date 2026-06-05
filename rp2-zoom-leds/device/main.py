@@ -78,6 +78,11 @@ def main():
     telemetry = telemetry_from_config(config) if telemetry_from_config else NullTelemetry()
     telemetry.log(
         "boot",
+        device_id=str(getattr(config, "DEVICE_ID", "")),
+        room_id=str(getattr(config, "ROOM_ID", "")),
+        hostname=str(getattr(config, "DEVICE_HOSTNAME", "")),
+        led_pin=int(getattr(config, "LED_PIN", 0)),
+        led_count=int(getattr(config, "LED_COUNT", 0)),
         network_enabled=bool(getattr(config, "NETWORK_ENABLED", False)),
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
         ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
@@ -350,7 +355,11 @@ class NetworkCommandReader:
             self._ensure_wifi()
 
             if self.state_enabled:
-                state = fetch_state(config.STATE_URL, getattr(config, "DEVICE_TOKEN", ""))
+                state = fetch_state(
+                    config.STATE_URL,
+                    getattr(config, "DEVICE_TOKEN", ""),
+                    getattr(config, "DEVICE_ID", ""),
+                )
                 fetched_ms = time.ticks_diff(time.ticks_ms(), started)
                 state_info = state_summary(state)
                 poll_seconds = state_poll_seconds_from_response(state)
@@ -429,6 +438,8 @@ class NetworkCommandReader:
                 config.WIFI_SSID,
                 config.WIFI_PASSWORD,
                 getattr(config, "WIFI_CONNECT_TIMEOUT_SECONDS", 20),
+                getattr(config, "DEVICE_HOSTNAME", "auto"),
+                getattr(config, "DEVICE_HOSTNAME_PREFIX", "zoom-light"),
             )
             try:
                 ip_address = self.wlan.ifconfig()[0]
@@ -477,7 +488,11 @@ class NetworkCommandReader:
         try:
             self._ensure_wifi()
 
-            state = fetch_state(config.STATE_URL, getattr(config, "DEVICE_TOKEN", ""))
+            state = fetch_state(
+                config.STATE_URL,
+                getattr(config, "DEVICE_TOKEN", ""),
+                getattr(config, "DEVICE_ID", ""),
+            )
             fetched_ms = time.ticks_diff(time.ticks_ms(), started)
             state_info = state_summary(state)
             poll_seconds = state_poll_seconds_from_response(state)

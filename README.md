@@ -6,8 +6,9 @@ A hackathon-friendly room status light for Zoom, configured for the
 The laptop/server side receives Zoom webhooks through ngrok, polls the Zoom
 schedule API, exposes a tiny live dashboard, and sends one JSON object per line
 over USB serial to the Pico. Zoom OAuth credentials stay on the laptop. The Pico
-only receives simplified LED commands and drives the WS2812/NeoPixel strip on
-GP0.
+only receives simplified LED commands and drives the WS2812/NeoPixel strip. For
+multi-board installs, each board's LED pin and room identity are configured in
+ignored `rp2-zoom-leds/device/secrets.py`.
 
 ## Light Priority
 
@@ -112,6 +113,8 @@ scheduled meeting, the server sends `ending_soon` within `ENDING_SOON_MINUTES`.
 /                 live dashboard
 /state            current state JSON for hardware
 /device/state     reduced LED command JSON for Pico W polling
+/device/state?device_id=board-room-a
+/device/board-room-a/state
 /events           Server-Sent Events stream for browser dashboard
 /schedule/check   force a schedule poll
 /reset            reset to free
@@ -138,7 +141,7 @@ rp2-zoom-leds/
 ```
 
 Use that project's device deploy scripts for the Pico. The expected hardware
-state is:
+defaults are:
 
 ```text
 MicroPython v1.28.0
@@ -147,6 +150,32 @@ LED_COUNT = 144
 BRIGHTNESS = 0.12
 RGB color order
 ```
+
+`rp2-zoom-leds/device/config.py` keeps shared defaults. Override per-board
+hardware in ignored `rp2-zoom-leds/device/secrets.py`:
+
+```python
+DEVICE_ID = "board-room-a"
+ROOM_ID = "zoom-room-a"
+DEVICE_HOSTNAME = "zoom-light-board-room-a"
+DEVICE_HOSTNAME_PREFIX = "zoom-light"
+DEVICE_HARDWARE = {
+    "board-room-a": {"led_pin": 0, "led_count": 144},
+    "board-room-b": {"led_pin": 2, "led_count": 144},
+    "board-room-c": {"led_pin": 4, "led_count": 144},
+    "board-room-d": {"led_pin": 6, "led_count": 144},
+}
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state?device_id=board-room-a"
+TELEMETRY_DEVICE_ID = DEVICE_ID
+```
+
+IP addresses are deployment/ops metadata only. Prefer hostnames such as
+`zoom-light-board-room-a.local` for WebREPL or `mpremote` when DHCP reservations
+are unavailable. Set `DEVICE_HOSTNAME = "auto"` to derive a unique fallback
+hostname like `zoom-light-ddeeff.local` from the board's Wi-Fi MAC suffix. See
+[`rp2-zoom-leds/devices.example.json`](rp2-zoom-leds/devices.example.json) for a
+four-board inventory template and the USB-visible details of the board observed
+on `/dev/cu.usbmodem1101`.
 
 To test the full host-to-Pico path without real Zoom events, start the server
 and visit the demo routes in the dashboard:
@@ -192,7 +221,7 @@ For local testing, copy `rp2-zoom-leds/device/secrets.example.py` to
 ```python
 WIFI_SSID = "..."
 WIFI_PASSWORD = "..."
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
+STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state?device_id=board-room-a"
 DEVICE_TOKEN = ""
 ```
 
