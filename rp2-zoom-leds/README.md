@@ -310,6 +310,7 @@ TELEMETRY_ENABLED = True
 TELEMETRY_HOST = "255.255.255.255"
 TELEMETRY_PORT = 9977
 TELEMETRY_DEVICE_ID = DEVICE_ID
+RESOURCE_MONITOR_ENABLED = True
 ```
 
 Broadcast is convenient because the Pico does not need to know your laptop IP.
@@ -324,6 +325,32 @@ After changing `device/secrets.py`, deploy once over USB:
 
 Once deployed, the board can run on its normal power supply. Keep the listener
 running on the laptop to capture live logs.
+
+To focus on CPU and memory pressure, watch only resource samples:
+
+```bash
+python3 host/telemetry_listener.py --event resource_sample --out logs/device-resources.jsonl
+```
+
+The resource monitor emits `resource_sample` events every
+`RESOURCE_MONITOR_SAMPLE_SECONDS` seconds. Each sample includes heap free/used
+bytes, estimated main-loop CPU busy percent, peak loop busy percent,
+over-budget loop counts, CPU clock speed, and Pico CPU temperature when
+available. The CPU number is an estimate based on loop active time versus the
+configured `LOOP_DELAY_MS`; desktop-style per-process CPU usage is not exposed
+by MicroPython on the Pico W, so the over-budget loop fields are the best signal
+for "we are not keeping up."
+
+Useful knobs in `device/secrets.py`:
+
+```python
+RESOURCE_MONITOR_ENABLED = TELEMETRY_ENABLED
+RESOURCE_MONITOR_SAMPLE_SECONDS = 10
+RESOURCE_MONITOR_CPU_WARN_PERCENT = 80
+RESOURCE_MONITOR_MIN_FREE_BYTES = 24000
+RESOURCE_MONITOR_GC_COLLECT = False
+RESOURCE_MONITOR_INCLUDE_TEMP = True
+```
 
 ## GitHub OTA Updates
 

@@ -1,6 +1,6 @@
 import json
 
-from device.telemetry import UdpTelemetry
+from device.telemetry import UdpTelemetry, from_config
 
 
 class FakeSocket:
@@ -29,3 +29,16 @@ def test_telemetry_payload_includes_device_id():
     assert payload["device_id"] == "board-room-a"
     assert payload["event"] == "boot"
     assert payload["state_poll_seconds"] == 5
+
+
+def test_resource_monitor_config_enables_udp_transport():
+    class Config:
+        TELEMETRY_ENABLED = False
+        RESOURCE_MONITOR_ENABLED = True
+        TELEMETRY_HOST = "127.0.0.1"
+        TELEMETRY_PORT = 9977
+        TELEMETRY_DEVICE_ID = "board-room-a"
+
+    telemetry = from_config(Config)
+
+    assert telemetry.enabled is True

@@ -110,3 +110,21 @@ def test_refresh_rate_settings_can_be_overridden_from_secrets():
 
     assert config.LED_MAX_REFRESH_FPS == 24
     assert config.LOOP_DELAY_MS == 42
+
+
+def test_resource_monitor_defaults_follow_telemetry_enabled():
+    config = load_config_with_secrets(TELEMETRY_ENABLED=True)
+
+    assert config.RESOURCE_MONITOR_ENABLED is True
+    assert config.RESOURCE_MONITOR_SAMPLE_SECONDS == 10
+    assert config.RESOURCE_MONITOR_CPU_WARN_PERCENT == 80
+    assert config.RESOURCE_MONITOR_MIN_FREE_BYTES == 24000
+
+
+def test_resource_monitor_can_be_disabled_separately():
+    config = load_config_with_secrets(
+        TELEMETRY_ENABLED=True,
+        RESOURCE_MONITOR_ENABLED=False,
+    )
+
+    assert config.RESOURCE_MONITOR_ENABLED is False

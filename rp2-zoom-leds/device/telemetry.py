@@ -86,7 +86,10 @@ class UdpTelemetry:
 
 def from_config(config):
     return UdpTelemetry(
-        enabled=getattr(config, "TELEMETRY_ENABLED", False),
+        enabled=(
+            getattr(config, "TELEMETRY_ENABLED", False)
+            or getattr(config, "RESOURCE_MONITOR_ENABLED", False)
+        ),
         host=getattr(config, "TELEMETRY_HOST", DEFAULT_HOST),
         port=getattr(config, "TELEMETRY_PORT", DEFAULT_PORT),
         device_id=getattr(config, "TELEMETRY_DEVICE_ID", "pico-w"),

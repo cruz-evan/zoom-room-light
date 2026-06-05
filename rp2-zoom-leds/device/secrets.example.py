@@ -61,3 +61,13 @@ TELEMETRY_ENABLED = False
 TELEMETRY_HOST = "255.255.255.255"
 TELEMETRY_PORT = 9977
 TELEMETRY_DEVICE_ID = DEVICE_ID
+
+# Optional resource monitor sent over the same telemetry UDP channel. It emits
+# resource_sample events with heap free bytes, loop timing, estimated CPU busy
+# percent, over-budget loop counts, clock speed, and Pico CPU temperature.
+RESOURCE_MONITOR_ENABLED = TELEMETRY_ENABLED
+RESOURCE_MONITOR_SAMPLE_SECONDS = 10
+RESOURCE_MONITOR_CPU_WARN_PERCENT = 80
+RESOURCE_MONITOR_MIN_FREE_BYTES = 24000
+RESOURCE_MONITOR_GC_COLLECT = False
+RESOURCE_MONITOR_INCLUDE_TEMP = True
