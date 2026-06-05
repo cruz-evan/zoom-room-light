@@ -10,6 +10,8 @@ IN_PROGRESS_PULSE_CYCLE_MS = 5166
 STARTING_SOON_LED_MS = 55
 STARTING_SOON_BLOCK_LEDS = 7.0
 STARTING_SOON_TAIL_LEDS = 10.0
+STARTING_SOON_CYAN = (44, 213, 252)
+STARTING_SOON_BACKGROUND = (0, 2, 8)
 
 
 def _ticks_ms():
@@ -91,6 +93,8 @@ class LedStrip:
         self.current_command = {"mode": "off"}
         self.pulse_started = _ticks_ms()
         self.effect_started = _ticks_ms()
+        self._last_solid_color = None
+        self._starting_soon_active = ()
 
         try:
             self.pixels = neopixel.NeoPixel(Pin(pin, Pin.OUT), self.count)
@@ -120,6 +124,9 @@ class LedStrip:
 
         try:
             color = self._scaled(rgb, multiplier)
+            if not force and color == self._last_solid_color:
+                self.last_refresh_ms = now
+                return True
             if hasattr(self.pixels, "fill"):
                 self.pixels.fill(color)
             else:
@@ -127,6 +134,8 @@ class LedStrip:
                     self.pixels[index] = color
             self.pixels.write()
             self.last_refresh_ms = now
+            self._last_solid_color = color
+            self._starting_soon_active = ()
             return True
         except Exception:
             self.available = False
@@ -200,6 +209,8 @@ class LedStrip:
                 self.pixels[index] = self._scaled(colors(index))
             self.pixels.write()
             self.last_refresh_ms = now
+            self._last_solid_color = None
+            self._starting_soon_active = ()
             return True
         except Exception:
             self.available = False
@@ -224,16 +235,60 @@ class LedStrip:
         return self.off(force=force)
 
     def _render_starting_soon(self, force=False):
+        if not self.available or self.pixels is None:
+            return False
+
+        due, now = self._refresh_due(force)
+        if not due:
+            return True
+
         now = _ticks_ms()
         led_count = max(1, self.count)
         elapsed = max(0, _ticks_diff(now, self.effect_started))
         head = ((STARTING_SOON_BLOCK_LEDS - 1.0) + (elapsed / STARTING_SOON_LED_MS)) % led_count
         block = min(STARTING_SOON_BLOCK_LEDS, float(led_count))
         tail = min(STARTING_SOON_TAIL_LEDS, float(led_count))
-        cyan = (44, 213, 252)
-        background = (0, 2, 8)
 
-        def color_at(index):
+        try:
+            background = self._scaled(STARTING_SOON_BACKGROUND)
+            levels = self._starting_soon_levels(head, led_count, block, tail)
+
+            if force or not self._starting_soon_active:
+                self._fill_pixels(background)
+            else:
+                for index in self._starting_soon_active:
+                    if index not in levels:
+                        self.pixels[index] = background
+
+            for index, level in levels.items():
+                self.pixels[index] = self._scaled(
+                    _mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)
+                )
+
+            self.pixels.write()
+            self.last_refresh_ms = now
+            self._last_solid_color = None
+            self._starting_soon_active = tuple(levels.keys())
+            return True
+        except Exception:
+            self.available = False
+            self.pixels = None
+            return False
+
+    def _fill_pixels(self, color):
+        if hasattr(self.pixels, "fill"):
+            self.pixels.fill(color)
+            return
+        for index in range(self.count):
+            self.pixels[index] = color
+
+    def _starting_soon_levels(self, head, led_count, block, tail):
+        levels = {}
+        head_index = int(head)
+        lit_span = int(block + tail)
+
+        for offset in range(lit_span):
+            index = (head_index - offset) % led_count
             distance = (head - index) % led_count
             level = 0.0
             if distance < block:
@@ -241,14 +296,17 @@ class LedStrip:
             if distance < block + tail:
                 fade = 1.0 - ((distance - block + 1.0) / (tail + 1.0))
                 level = max(level, _smoothstep(fade))
+            if level > levels.get(index, 0.0):
+                levels[index] = level
 
-            ahead = (index - head) % led_count
-            if ahead < 1.0:
-                level = max(level, _smoothstep(1.0 - ahead))
+        ahead_index = (head_index + 1) % led_count
+        ahead = (ahead_index - head) % led_count
+        if ahead < 1.0:
+            level = _smoothstep(1.0 - ahead)
+            if level > levels.get(ahead_index, 0.0):
+                levels[ahead_index] = level
 
-            return _mix_rgb(background, cyan, level)
-
-        return self._write_pattern(color_at, force=force)
+        return levels
 
     def _render_in_progress(self, force=False):
         level = 0.25 + (0.75 * self._sine_wave(IN_PROGRESS_PULSE_CYCLE_MS))

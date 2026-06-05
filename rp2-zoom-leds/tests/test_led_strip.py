@@ -111,7 +111,7 @@ def test_animation_ticks_are_limited_to_max_refresh_rate(monkeypatch):
     led_strip = load_led_strip(monkeypatch, ticks)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
 
-    strip.apply({"mode": "meeting_status", "state": "in_progress"})
+    strip.apply({"mode": "meeting_status", "state": "starting_soon", "minutes": 5})
     writes_after_apply = strip.pixels.write_count
 
     ticks["now"] = 33
@@ -120,6 +120,25 @@ def test_animation_ticks_are_limited_to_max_refresh_rate(monkeypatch):
     assert strip.pixels.write_count == writes_after_apply
 
     ticks["now"] = 34
+    strip.tick()
+
+    assert strip.pixels.write_count == writes_after_apply + 1
+
+
+def test_unchanged_solid_animation_frames_are_not_rewritten(monkeypatch):
+    ticks = {"now": 0}
+    led_strip = load_led_strip(monkeypatch, ticks)
+    strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
+
+    strip.apply({"mode": "meeting_status", "state": "in_progress"})
+    writes_after_apply = strip.pixels.write_count
+
+    ticks["now"] = 34
+    strip.tick()
+
+    assert strip.pixels.write_count == writes_after_apply
+
+    ticks["now"] = 646
     strip.tick()
 
     assert strip.pixels.write_count == writes_after_apply + 1
