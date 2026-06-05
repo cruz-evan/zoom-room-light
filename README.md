@@ -1,31 +1,46 @@
 # Zoom Room Light
 
-A hackathon-friendly room status light for Zoom, configured for the
-`rp2-zoom-leds` Raspberry Pi Pico / RP2040 LED strip firmware.
+A Zoom room status indicator for Raspberry Pi Pico W LED strips.
 
-The laptop/server side receives Zoom webhooks through ngrok, polls the Zoom
-schedule API, exposes a tiny live dashboard, and sends one JSON object per line
-over USB serial to the Pico. Zoom OAuth credentials stay on the laptop. The Pico
-only receives simplified LED commands and drives the WS2812/NeoPixel strip. For
-multi-board installs, each board's LED pin and room identity are configured in
-ignored `rp2-zoom-leds/device/secrets.py`.
+The supported runtime is intentionally small:
 
-## Light Priority
+- `cloudflare-worker/` receives Zoom webhooks, polls Zoom schedules from
+  Cloudflare Cron, stores the current room state in Workers KV, and exposes the
+  Pico polling endpoint.
+- `rp2-zoom-leds/device/` runs on the Pico W, polls `/device/state`, maps the
+  reduced command to LED behavior, and supports OTA app-file updates.
+- `rp2-zoom-leds/host/` contains USB serial and telemetry tools for bench
+  testing and recovery.
 
-The project always resolves state in this order:
+The old laptop Python webhook relay, early cloud wrapper, and
+standalone legacy Wi-Fi client have been removed. Testing should use the
+protected Worker simulation endpoints or the `rp2-zoom-leds` host tools.
+
+## Light States
+
+The relay always resolves state in this priority order:
 
 ```text
 ending soon  -> amber/orange
 in use       -> active meeting
 starts soon  -> upcoming meeting
 free         -> off
-error        -> dashboard warning
+error        -> retry / no state change
 ```
 
-That means if a `meeting.ended` webhook arrives while another meeting starts
-soon, the strip stays in `starting_soon` instead of turning off.
+The device polling contract is the same in production and tests:
 
-The serial command contract matches the Pico firmware:
+```json
+{
+  "v": 1,
+  "command": { "mode": "meeting_status", "state": "in_progress" },
+  "poll_seconds": 5,
+  "updated_at": "2026-06-04T00:00:00.000Z",
+  "last_event": "meeting.started"
+}
+```
+
+Supported commands:
 
 ```json
 {"mode":"meeting_status","state":"starting_soon","minutes":5}
@@ -34,341 +49,101 @@ The serial command contract matches the Pico firmware:
 {"mode":"off"}
 ```
 
-## Server Setup
+## Cloud Relay
 
-Create a virtual environment and install the serial dependency:
+Current deployment:
+
+```text
+https://zoom-led-room-light.connor-zoom-led-room-light.workers.dev
+```
+
+Worker setup and deploy docs live in
+[`cloudflare-worker/README.md`](cloudflare-worker/README.md). The short path is:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+cd cloudflare-worker
+npm ci
+npm test
+npm run deploy
 ```
 
-Copy `.env.example` to `.env` and fill in both Zoom app credential sets:
-
-```bash
-ZOOM_WEBHOOK_SECRET_TOKEN=...
-
-ZOOM_ACCOUNT_ID=...
-ZOOM_CLIENT_ID=...
-ZOOM_CLIENT_SECRET=...
-ZOOM_SCHEDULE_USER_ID=your.zoom.email@example.com
-
-SCHEDULE_LOOKAHEAD_MINUTES=5
-ENDING_SOON_MINUTES=5
-SCHEDULE_POLL_SECONDS=60
-DEVICE_POLL_SECONDS=5
-PORT=5050
-
-RP2_SERIAL_ENABLED=true
-RP2_SERIAL_PORT=auto
-RP2_SERIAL_BAUD=115200
-RP2_SERIAL_DRY_RUN=false
-DEVICE_TOKEN=
-```
-
-Use `RP2_SERIAL_PORT=auto` for the usual macOS Pico path. If multiple USB
-serial devices are attached, set the exact port, for example
-`/dev/cu.usbmodem1101`.
-
-Run the server from this repo:
-
-```bash
-python3 zoom_light_webhook.py --port 5050
-```
-
-Expose it with ngrok:
-
-```bash
-ngrok http 5050
-```
-
-Use this Zoom webhook URL:
+Production routes:
 
 ```text
-https://YOUR-NGROK-URL/zoom/webhook
+POST /zoom/webhook       Zoom webhook receiver
+GET  /device/state       Pico polling endpoint
+GET  /device/state?device_id=board-room-a
+GET  /device/board-room-a/state
+GET  /health
+POST /schedule/check     protected immediate schedule poll
 ```
 
-Subscribe to:
+Protected simulation routes remain available for status-indicator testing when
+`ADMIN_TOKEN` is configured:
 
 ```text
-meeting.started
-meeting.ended
-meeting.created
-meeting.updated
-meeting.deleted
+GET  /simulate/start
+GET  /simulate/end
+GET  /simulate/upcoming?minutes=5
+GET  /simulate/ending-soon?minutes=5
+POST /simulate/reset
 ```
 
-The schedule polling does not come from a webhook. It uses the Server-to-Server
-OAuth app to poll Zoom and send `starting_soon` when a meeting starts within
-`SCHEDULE_LOOKAHEAD_MINUTES`. If Zoom returns duration data for the active
-scheduled meeting, the server sends `ending_soon` within `ENDING_SOON_MINUTES`.
-Calendar data never turns an active meeting off; `meeting.ended` is the source
-of truth for returning the room to `free` or the next `starting_soon` warning.
+## Pico Firmware
 
-## Local Routes
+Firmware setup, deployment, OTA, telemetry, and hardware testing docs live in
+[`rp2-zoom-leds/README.md`](rp2-zoom-leds/README.md).
 
-```text
-/                 live dashboard
-/state            current state JSON for hardware
-/device/state     reduced LED command JSON for Pico W polling
-/device/state?device_id=board-room-a
-/device/board-room-a/state
-/events           Server-Sent Events stream for browser dashboard
-/schedule/check   force a schedule poll
-/reset            reset to free
-```
-
-Demo routes:
-
-```text
-/simulate/start
-/simulate/end
-/simulate/join
-/simulate/leave
-/simulate/upcoming
-/simulate/ending-soon
-/simulate/clear-upcoming
-```
-
-Test-control routes are only enabled when `ZOOM_TEST_CONTROL_ENABLED=true`:
-
-```text
-/test/schedule    list or replace the local stub schedule
-/test/zoom-event  apply a fake Zoom room event
-```
-
-## Pico / RP2040 Hardware
-
-This repo includes the `rp2-zoom-leds` Pico firmware project:
-
-```text
-rp2-zoom-leds/
-```
-
-Use that project's device deploy scripts for the Pico. The expected hardware
-defaults are:
-
-```text
-MicroPython v1.28.0
-WS2812/NeoPixel data on GP0
-LED_COUNT = 144
-BRIGHTNESS = 0.12
-LED_MAX_REFRESH_FPS = 30
-RGB color order
-```
-
-`rp2-zoom-leds/device/config.py` keeps shared defaults. Override per-board
-hardware in ignored `rp2-zoom-leds/device/secrets.py`:
-
-```python
-DEVICE_ID = "auto"
-ROOM_ID = "zoom-room-a"
-DEVICE_HOSTNAME = "zoom-light-board-room-a"
-DEVICE_HOSTNAME_PREFIX = "zoom-light"
-DEVICE_HARDWARE = {
-    "board-room-a": {"led_pin": 0, "led_count": 144},
-    "board-room-b": {"led_pin": 2, "led_count": 144},
-    "board-room-c": {"led_pin": 4, "led_count": 144},
-    "board-room-d": {"led_pin": 6, "led_count": 144},
-}
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
-TELEMETRY_DEVICE_ID = DEVICE_ID
-```
-
-IP addresses are deployment/ops metadata only. Prefer hostnames such as
-`zoom-light-board-room-a.local` for WebREPL or `mpremote` when DHCP reservations
-are unavailable. Set `DEVICE_HOSTNAME = "auto"` to derive a unique fallback
-hostname like `zoom-light-ddeeff.local` from the board's Wi-Fi MAC suffix. Set
-`DEVICE_ID = "auto"` to derive a unique board ID like
-`pico-e66430a64b2a8d32` from `machine.unique_id()`. See
-[`rp2-zoom-leds/devices.example.json`](rp2-zoom-leds/devices.example.json) for a
-four-board inventory template and the USB-visible details of the board observed
-on `/dev/cu.usbmodem1101`.
-
-Regular app deploys preserve the board's existing `secrets.py`:
+Typical local setup:
 
 ```bash
 cd rp2-zoom-leds
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+PYTHONPATH=. pytest
+```
+
+Create local device secrets only on your machine:
+
+```bash
+cp device/secrets.example.py device/secrets.py
+```
+
+For production polling, set the Pico's `STATE_URL` to the Worker endpoint:
+
+```python
+STATE_URL = "https://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
+DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
+```
+
+Deploy app files over USB while preserving board-local secrets:
+
+```bash
 ./scripts/deploy_device.sh
 ```
 
-Only provision or intentionally update secrets over USB:
+## Verification
+
+Run the supported test suites:
+
+```bash
+cd cloudflare-worker
+npm test
+
+cd ../rp2-zoom-leds
+PYTHONPATH=. pytest
+```
+
+Dry-run the LED command simulator without hardware:
 
 ```bash
 cd rp2-zoom-leds
-./scripts/deploy_device.sh --with-secrets
+python host/simulate_zoom.py --dry-run --loops 1
 ```
 
-OTA bundles never include `secrets.py` or `secrets.example.py`.
-
-To test the full host-to-Pico path without real Zoom events, start the Wi-Fi
-stub server. This keeps the Pico on normal power and Wi-Fi, still polling the
-real `/device/state` contract, while your laptop pretends to be Zoom schedule
-and room-status input:
-
-```bash
-python3 zoom_room_stub.py serve --port 5050
-```
-
-Point the Pico's `STATE_URL` at the printed LAN URL, usually:
-
-```python
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
-```
-
-Then change the fake room state from another terminal:
-
-```bash
-python3 zoom_room_stub.py status starting-soon --starts-in 3
-python3 zoom_room_stub.py status in-progress
-python3 zoom_room_stub.py status ending-soon --ends-in 3
-python3 zoom_room_stub.py status free
-```
-
-`status` commands set the whole fake room state. You can also manipulate only
-the fake schedule and let the normal schedule watcher drive the warning:
-
-```bash
-python3 zoom_room_stub.py schedule upcoming --starts-in 4 --duration 20
-python3 zoom_room_stub.py schedule ending-soon --ends-in 2 --duration 10
-python3 zoom_room_stub.py schedule clear
-python3 zoom_room_stub.py scenario --step-seconds 8
-```
-
-The stub schedule is stored in ignored
-`.zoom-room-light.stub-schedule.json`. The server also exposes the dashboard, so
-you can watch the browser and the physical light agree:
-
-```text
-http://localhost:5050/
-```
-
-For the older USB-oriented demo route flow, start the normal server and click
-the dashboard buttons. Or dry-run the JSON serial output without hardware:
-
-```bash
-RP2_SERIAL_ENABLED=true RP2_SERIAL_DRY_RUN=true python3 zoom_light_webhook.py --port 5050
-```
-
-Then click `Simulate Upcoming`, `Simulate Start`, `Simulate Ending Soon`, and
-`Simulate End`.
-
-## Legacy Wi-Fi Client
-
-The original project also includes a polling MicroPython client in
-[micropython_light/README.md](micropython_light/README.md). That path is not
-needed for the Pico strip build because `rp2-zoom-leds` already owns the
-hardware control and reads USB serial commands.
-
-For that legacy client, `micropython_light/boot.py` can start WebREPL on the
-Pico W after Wi-Fi connects. After the initial USB setup, deploy updates over
-Wi-Fi and soft-reset MicroPython with:
-
-```bash
-WEBREPL_PASSWORD='use-a-real-password' ./scripts/deploy_micropython_webrepl.py 192.168.1.123
-```
-
-The script uploads the MicroPython files, sends `Ctrl-C` to stop the running
-loop, and sends `Ctrl-D` to soft-reset the interpreter so the new files take
-effect without a physical power cycle.
-
-## Pico W Polling Mode
-
-The `rp2-zoom-leds` firmware can also poll this server directly from a Pico W.
-For local testing, copy `rp2-zoom-leds/device/secrets.example.py` to
-`rp2-zoom-leds/device/secrets.py` and set:
-
-```python
-WIFI_SSID = "..."
-WIFI_PASSWORD = "..."
-STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
-DEVICE_TOKEN = ""
-```
-
-If you set `DEVICE_TOKEN` in this server's `.env`, set the same value in the
-Pico's `device/secrets.py`. The token only authorizes the board to read reduced
-LED state; Zoom account secrets stay on the server or cloud relay.
-
-## Cloud Relay
-
-The laptop-free relay lives in
-[`cloudflare-worker/`](cloudflare-worker/). It is a Cloudflare Worker that:
-
-- receives `POST /zoom/webhook`,
-- answers Zoom `endpoint.url_validation`,
-- verifies Zoom `x-zm-signature` on normal webhook events,
-- polls Zoom schedules from Cloudflare Cron for `starting_soon` and `ending_soon`,
-- stores the current reduced Pico command in Workers KV,
-- exposes `GET /device/state` for Pico W polling, and
-- provides protected `/simulate/*` routes for testing without Zoom.
-
-Follow [`cloudflare-worker/README.md`](cloudflare-worker/README.md) for the KV,
-secret, deploy, Zoom, simulate, and Pico update steps.
-
-## Checks
-
-```bash
-PYTHONPYCACHEPREFIX=/private/tmp/codex_pycache python3 -m py_compile zoom_light_webhook.py zoom_light/*.py zoom_schedule.py
-python3 - <<'PY'
-from zoom_light.serial_output import command_from_state, encode_command
-for state in (
-    {"next_meeting_id": "demo", "minutes_until_next": 5},
-    {"in_use": True},
-    {"in_use": True, "minutes_until_end": 5},
-    {},
-):
-    print(encode_command(command_from_state(state)).strip())
-PY
-python3 micropython_light/test_priority.py
-```
-
-## Cloudflare Deployment
-
-This repo includes an early Cloudflare Containers deployment setup:
-
-```text
-.github/workflows/deploy-cloudflare.yml
-wrangler.jsonc
-cloudflare/worker.ts
-Dockerfile
-```
-
-The GitHub Action is safe to merge before Cloudflare is fully configured. It
-skips deployment until these repository secrets exist:
-
-```text
-CLOUDFLARE_ACCOUNT_ID
-CLOUDFLARE_API_TOKEN
-```
-
-Add these GitHub repository secrets for the Zoom runtime config:
-
-```text
-ZOOM_WEBHOOK_SECRET_TOKEN
-ZOOM_ACCOUNT_ID
-ZOOM_CLIENT_ID
-ZOOM_CLIENT_SECRET
-ZOOM_SCHEDULE_USER_ID
-SCHEDULE_LOOKAHEAD_MINUTES
-SCHEDULE_POLL_SECONDS
-```
-
-Cloudflare notes:
-
-- Use an API token with Workers edit/deploy permissions scoped to the target Cloudflare account.
-- Cloudflare Containers deploy via Wrangler, which builds the `Dockerfile` image and pushes it to Cloudflare's managed registry.
-- The Worker proxies requests to the Python container, so the public Cloudflare Worker URL replaces the ngrok URL once deployed.
-- Update the Zoom webhook endpoint to:
-
-```text
-https://YOUR-CLOUDFLARE-WORKER-URL/zoom/webhook
-```
-
-Local validation:
-
-```bash
-npm install
-npm run typecheck
-```
+The Cloudflare deployment workflow at
+`.github/workflows/deploy-cloudflare.yml` installs, tests, and deploys only
+`cloudflare-worker/`. The OTA workflow at `.github/workflows/pico-ota.yml`
+builds and publishes only `rp2-zoom-leds/device/` app files.

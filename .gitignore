@@ -11,8 +11,6 @@ node_modules/
 htmlcov/
 .idea/
 .vscode/
-node_modules/
-.wrangler/
 
 # Local secrets and device-specific config
 .env
@@ -22,7 +20,6 @@ node_modules/
 .dev.vars.*
 !.dev.vars.example
 .envrc
-.zoom-room-light.stub-schedule.json
 *.pem
 *.key
 *.crt
@@ -30,8 +27,7 @@ node_modules/
 *.pfx
 *secret*.json
 *credentials*.json
-micropython_light/config.py
-micropython_light/secrets.py
 
-# Generated screenshots/artifacts
-zoom_light_dashboard.png
+# Generated artifacts
+rp2-zoom-leds/_site/
+rp2-zoom-leds/build/
