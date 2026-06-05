@@ -186,6 +186,22 @@ hostname like `zoom-light-ddeeff.local` from the board's Wi-Fi MAC suffix. Set
 four-board inventory template and the USB-visible details of the board observed
 on `/dev/cu.usbmodem1101`.
 
+Regular app deploys preserve the board's existing `secrets.py`:
+
+```bash
+cd rp2-zoom-leds
+./scripts/deploy_device.sh
+```
+
+Only provision or intentionally update secrets over USB:
+
+```bash
+cd rp2-zoom-leds
+./scripts/deploy_device.sh --with-secrets
+```
+
+OTA bundles never include `secrets.py` or `secrets.example.py`.
+
 To test the full host-to-Pico path without real Zoom events, start the Wi-Fi
 stub server. This keeps the Pico on normal power and Wi-Fi, still polling the
 real `/device/state` contract, while your laptop pretends to be Zoom schedule

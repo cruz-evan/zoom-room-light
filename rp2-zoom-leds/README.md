@@ -28,8 +28,8 @@ Supported serial commands:
 
 The newer `meeting_status` mode is the preferred final-product contract. The host/Zoom side decides whether a meeting is within the 5 minute start/end window, then the RP2 renders the behavior:
 
-- `starting_soon`: blue moving cue for an impending meeting.
-- `in_progress`: calm green/teal in-meeting indication.
+- `starting_soon`: warm yellow moving cue for an impending meeting.
+- `in_progress`: steady red in-meeting indication.
 - `ending_soon`: amber pulse that can become more urgent as `minutes` approaches 0.
 
 On boot, the Pico W runs a short startup sequence after network connectivity is
@@ -87,11 +87,22 @@ On macOS the serial port is usually something like `/dev/cu.usbmodem1101`. The h
 
 ## Deploy Device Code
 
-Copy all MicroPython files to the board:
+Copy tracked app files to the board while preserving the board-local
+`secrets.py`:
 
 ```bash
 ./scripts/deploy_device.sh
 ```
+
+Provision or intentionally update `secrets.py` over USB only:
+
+```bash
+./scripts/deploy_device.sh --with-secrets
+```
+
+`secrets.py` and `secrets.example.py` are never included in OTA bundles. The
+default USB deploy also skips them so app updates do not accidentally overwrite
+per-board Wi-Fi, token, identity, or hardware settings.
 
 Open the MicroPython REPL:
 

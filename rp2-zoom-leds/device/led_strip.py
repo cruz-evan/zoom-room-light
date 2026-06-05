@@ -168,25 +168,28 @@ class LedStrip:
 
     def _render_starting_soon(self):
         now = _ticks_ms()
-        head = (now // 40) % max(1, self.count)
-        tail = max(10, self.count // 8)
+        head = (now // 35) % max(1, self.count)
+        tail = max(12, self.count // 5)
+        marker_gap = max(6, self.count // 12)
 
         def color_at(index):
             distance = (head - index) % self.count
             if distance < tail:
                 level = 1.0 - (distance / tail)
                 return (
-                    int(10 + 30 * level),
-                    int(35 + 120 * level),
-                    int(90 + 165 * level),
+                    int(22 + 233 * level),
+                    int(18 + 198 * level),
+                    int(4 + 28 * level),
                 )
-            return (0, 8, 22)
+            if ((index + head // 2) % marker_gap) == 0:
+                return (0, 30, 90)
+            return (0, 2, 10)
 
         return self._write_pattern(color_at)
 
     def _render_in_progress(self):
-        level = 0.82 + (0.18 * self._triangle_wave(3600))
-        return self._write_color((0, 175, 145), level)
+        level = 0.86 + (0.14 * self._triangle_wave(4200))
+        return self._write_color((255, 0, 20), level)
 
     def _render_ending_soon(self):
         minutes = float(self.current_command.get("minutes", 5.0))
