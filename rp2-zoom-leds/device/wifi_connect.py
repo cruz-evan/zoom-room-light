@@ -3,7 +3,7 @@ import time
 import network
 
 
-def connect_wifi(ssid, password, timeout_seconds=20, hostname="auto", hostname_prefix="zoom-light"):
+def connect_wifi_profiles(profiles, timeout_seconds=20, hostname="auto", hostname_prefix="zoom-light"):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     _disable_power_save(wlan)
@@ -12,20 +12,56 @@ def connect_wifi(ssid, password, timeout_seconds=20, hostname="auto", hostname_p
     if wlan.isconnected():
         return wlan
 
-    print("Connecting to Wi-Fi...")
-    wlan.connect(ssid, password)
+    last_error = None
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        ssid = str(profile.get("ssid") or "")
+        password = str(profile.get("password") or "")
+        if not ssid:
+            continue
 
+        try:
+            _disconnect(wlan)
+            print("Connecting to Wi-Fi:", ssid)
+            wlan.connect(ssid, password)
+            _wait_connected(wlan, timeout_seconds)
+            if resolved_hostname:
+                print("Wi-Fi connected:", wlan.ifconfig()[0], resolved_hostname)
+            else:
+                print("Wi-Fi connected:", wlan.ifconfig()[0])
+            return wlan
+        except Exception as exc:
+            last_error = exc
+            print("Wi-Fi profile failed:", ssid, exc)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No Wi-Fi profiles configured")
+
+
+def connect_wifi(ssid, password, timeout_seconds=20, hostname="auto", hostname_prefix="zoom-light"):
+    return connect_wifi_profiles(
+        [{"ssid": ssid, "password": password}],
+        timeout_seconds,
+        hostname,
+        hostname_prefix,
+    )
+
+
+def _wait_connected(wlan, timeout_seconds):
     started = time.time()
     while not wlan.isconnected():
         if time.time() - started > timeout_seconds:
             raise RuntimeError("Wi-Fi connection timed out")
         time.sleep(0.25)
 
-    if resolved_hostname:
-        print("Wi-Fi connected:", wlan.ifconfig()[0], resolved_hostname)
-    else:
-        print("Wi-Fi connected:", wlan.ifconfig()[0])
-    return wlan
+
+def _disconnect(wlan):
+    try:
+        wlan.disconnect()
+    except Exception:
+        pass
 
 
 def _disable_power_save(wlan):

@@ -1,0 +1,76 @@
+name: Provision Pico over USB
+
+on:
+  workflow_dispatch:
+    inputs:
+      port:
+        description: "mpremote port, hostname, or auto"
+        required: false
+        default: "auto"
+      device_id:
+        description: "Optional DEVICE_ID override for this provisioning run"
+        required: false
+        default: ""
+      room_id:
+        description: "Optional ROOM_ID override for this provisioning run"
+        required: false
+        default: ""
+      device_hostname:
+        description: "Optional DEVICE_HOSTNAME override for this provisioning run"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: Deploy app and provision secrets
+    runs-on: self-hosted
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: rp2-zoom-leds
+
+    env:
+      WIFI_SSID: ${{ secrets.WIFI_SSID || secrets.OFFICE_WIFI_SSID || secrets.FALLBACK_PHONE_HOTSPOT_WIFI_SSID || secrets.PHONE_HOTSPOT_SSID }}
+      WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD || secrets.OFFICE_WIFI_PASSWORD || secrets.FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD || secrets.PHONE_HOTSPOT_PASSWORD }}
+      DEVICE_ID: ${{ inputs.device_id }}
+      ROOM_ID: ${{ inputs.room_id }}
+      DEVICE_HOSTNAME: ${{ inputs.device_hostname }}
+      STATE_URL: ${{ vars.STATE_URL }}
+      DEVICE_TOKEN: ${{ secrets.DEVICE_TOKEN }}
+      OTA_MANIFEST_URL: ${{ vars.OTA_MANIFEST_URL }}
+      OTA_TOKEN: ${{ secrets.OTA_TOKEN }}
+      OTA_CONFIG_KEY: ${{ secrets.OTA_CONFIG_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install mpremote
+        run: python -m pip install --upgrade mpremote
+
+      - name: Check Wi-Fi secrets
+        run: |
+          if [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PASSWORD" ]; then
+            echo "A complete WIFI_*, OFFICE_WIFI_*, or PHONE_HOTSPOT_* repository secret pair is required for USB provisioning." >&2
+            exit 1
+          fi
+          if [ -z "$STATE_URL" ] && [ -z "$OTA_MANIFEST_URL" ]; then
+            echo "Set repository variable STATE_URL or OTA_MANIFEST_URL before provisioning from GitHub Actions." >&2
+            exit 1
+          fi
+          if [ -z "$OTA_CONFIG_KEY" ]; then
+            echo "OTA_CONFIG_KEY repository secret is required for encrypted Wi-Fi config OTA." >&2
+            exit 1
+          fi
+
+      - name: Deploy over USB with generated secrets.py
+        run: ./scripts/deploy_device.sh "${{ inputs.port }}" --with-secrets

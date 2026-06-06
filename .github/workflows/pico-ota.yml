@@ -7,6 +7,7 @@ on:
       - ".github/workflows/pico-ota.yml"
       - "rp2-zoom-leds/device/**"
       - "rp2-zoom-leds/scripts/build_ota_site.py"
+      - "rp2-zoom-leds/scripts/build_wifi_config.py"
       - "rp2-zoom-leds/tests/**"
       - "rp2-zoom-leds/requirements-dev.txt"
   pull_request:
@@ -14,6 +15,7 @@ on:
       - ".github/workflows/pico-ota.yml"
       - "rp2-zoom-leds/device/**"
       - "rp2-zoom-leds/scripts/build_ota_site.py"
+      - "rp2-zoom-leds/scripts/build_wifi_config.py"
       - "rp2-zoom-leds/tests/**"
       - "rp2-zoom-leds/requirements-dev.txt"
   workflow_dispatch:
@@ -45,7 +47,7 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Compile firmware files
-        run: python -m py_compile device/*.py scripts/build_ota_site.py
+        run: python -m py_compile device/*.py scripts/build_ota_site.py scripts/build_wifi_config.py
 
       - name: Run tests
         run: PYTHONPATH=. pytest
@@ -94,12 +96,27 @@ jobs:
         env:
           DEFAULT_OTA_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           OTA_BASE_URL: ${{ vars.OTA_BASE_URL }}
+          OTA_CONFIG_KEY: ${{ secrets.OTA_CONFIG_KEY }}
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD }}
+          WIFI_FALLBACK_SSID: ${{ secrets.WIFI_FALLBACK_SSID }}
+          WIFI_FALLBACK_PASSWORD: ${{ secrets.WIFI_FALLBACK_PASSWORD }}
+          FALLBACK_PHONE_HOTSPOT_WIFI_SSID: ${{ secrets.FALLBACK_PHONE_HOTSPOT_WIFI_SSID }}
+          FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD: ${{ secrets.FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD }}
+          PHONE_HOTSPOT_SSID: ${{ secrets.PHONE_HOTSPOT_SSID }}
+          PHONE_HOTSPOT_PASSWORD: ${{ secrets.PHONE_HOTSPOT_PASSWORD }}
+          OFFICE_WIFI_SSID: ${{ secrets.OFFICE_WIFI_SSID }}
+          OFFICE_WIFI_PASSWORD: ${{ secrets.OFFICE_WIFI_PASSWORD }}
         run: |
           BASE_URL="${OTA_BASE_URL:-$DEFAULT_OTA_BASE_URL}"
+          CONFIG_VERSION="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           python scripts/build_ota_site.py \
             --base-url "$BASE_URL" \
             --version "$GITHUB_SHA" \
             --output _site
+          python scripts/build_wifi_config.py \
+            --version "$CONFIG_VERSION" \
+            --output _site/wifi-config.json
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

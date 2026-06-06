@@ -1,5 +1,6 @@
 import sys
 import time
+import machine
 
 try:
     import _thread
@@ -18,15 +19,23 @@ from state_mapper import command_from_state
 
 try:
     from state_client import fetch_state
-    from wifi_connect import connect_wifi
+    from wifi_connect import connect_wifi_profiles
+    from wifi_profiles import profiles_from_config
 except ImportError:
     fetch_state = None
-    connect_wifi = None
+    connect_wifi_profiles = None
+    profiles_from_config = None
 
 try:
     from ota_client import check_for_update
 except Exception:
     check_for_update = None
+
+try:
+    from ota_config import check_for_config_update, config_url_from_manifest_url
+except Exception:
+    check_for_config_update = None
+    config_url_from_manifest_url = None
 
 try:
     from telemetry import from_config as telemetry_from_config
@@ -333,6 +342,7 @@ class NetworkCommandReader:
         self.enabled = bool(getattr(config, "NETWORK_ENABLED", False))
         self.state_enabled = bool(getattr(config, "STATE_URL", ""))
         self.ota_enabled = bool(getattr(config, "OTA_ENABLED", False))
+        self.ota_config_enabled = bool(getattr(config, "OTA_CONFIG_ENABLED", False))
         self.next_poll_ms = time.ticks_ms()
         self.next_ota_check_ms = time.ticks_add(
             time.ticks_ms(),
@@ -343,7 +353,7 @@ class NetworkCommandReader:
         self.wlan = None
         self.last_command = None
 
-        if self.enabled and connect_wifi is None:
+        if self.enabled and (connect_wifi_profiles is None or profiles_from_config is None):
             print("Wi-Fi module unavailable; staying in serial mode.")
             self.enabled = False
         if self.state_enabled and fetch_state is None:
@@ -352,7 +362,10 @@ class NetworkCommandReader:
         if self.ota_enabled and check_for_update is None:
             print("OTA module unavailable; disabling OTA.")
             self.ota_enabled = False
-        if not self.state_enabled and not self.ota_enabled:
+        if self.ota_config_enabled and check_for_config_update is None:
+            print("OTA config module unavailable; disabling OTA config.")
+            self.ota_config_enabled = False
+        if not self.state_enabled and not self.ota_enabled and not self.ota_config_enabled:
             self.enabled = False
         if not self.enabled:
             print("Network disabled; using USB serial control.")
@@ -361,6 +374,7 @@ class NetworkCommandReader:
             enabled=self.enabled,
             state_enabled=self.state_enabled,
             ota_enabled=self.ota_enabled,
+            ota_config_enabled=self.ota_config_enabled,
             state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
             ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         )
@@ -410,12 +424,8 @@ class NetworkCommandReader:
                 )
                 return True, normalized
 
-            if self.ota_enabled:
-                status = check_for_update(
-                    config.OTA_MANIFEST_URL,
-                    getattr(config, "OTA_TOKEN", ""),
-                    getattr(config, "OTA_MAX_FILE_BYTES", 65536),
-                )
+            if self.ota_enabled or self.ota_config_enabled:
+                status = self._check_ota()
                 self.next_ota_check_ms = time.ticks_add(
                     time.ticks_ms(),
                     int(getattr(config, "OTA_CHECK_SECONDS", 60) * 1000),
@@ -445,7 +455,10 @@ class NetworkCommandReader:
         if self.serial_override_active():
             return None
 
-        ota_due = self.ota_enabled and time.ticks_diff(now, self.next_ota_check_ms) >= 0
+        ota_due = (
+            (self.ota_enabled or self.ota_config_enabled)
+            and time.ticks_diff(now, self.next_ota_check_ms) >= 0
+        )
         state_due = self.state_enabled and time.ticks_diff(now, self.next_poll_ms) >= 0
         if not ota_due and not state_due:
             return None
@@ -462,9 +475,8 @@ class NetworkCommandReader:
         if self.wlan is None or not self.wlan.isconnected():
             started = time.ticks_ms()
             self.telemetry.log("wifi_connect_start")
-            self.wlan = connect_wifi(
-                config.WIFI_SSID,
-                config.WIFI_PASSWORD,
+            self.wlan = connect_wifi_profiles(
+                profiles_from_config(config),
                 getattr(config, "WIFI_CONNECT_TIMEOUT_SECONDS", 20),
                 getattr(config, "DEVICE_HOSTNAME", "auto"),
                 getattr(config, "DEVICE_HOSTNAME_PREFIX", "zoom-light"),
@@ -483,13 +495,7 @@ class NetworkCommandReader:
         started = time.ticks_ms()
         try:
             self._ensure_wifi()
-            status = check_for_update(
-                config.OTA_MANIFEST_URL,
-                getattr(config, "OTA_TOKEN", ""),
-                getattr(config, "OTA_MAX_FILE_BYTES", 65536),
-            )
-            if status == "applied":
-                return
+            status = self._check_ota()
             self.telemetry.log(
                 "ota_poll",
                 status=status,
@@ -510,6 +516,36 @@ class NetworkCommandReader:
                 now,
                 int(getattr(config, "OTA_ERROR_RETRY_SECONDS", 60) * 1000),
             )
+
+    def _check_ota(self):
+        statuses = []
+        if self.ota_enabled:
+            status = check_for_update(
+                config.OTA_MANIFEST_URL,
+                getattr(config, "OTA_TOKEN", ""),
+                getattr(config, "OTA_MAX_FILE_BYTES", 65536),
+            )
+            statuses.append("app:%s" % status)
+            if status == "applied":
+                return "app:applied"
+
+        if self.ota_config_enabled:
+            config_url = str(getattr(config, "OTA_CONFIG_URL", "") or "")
+            if not config_url and config_url_from_manifest_url is not None:
+                config_url = config_url_from_manifest_url(getattr(config, "OTA_MANIFEST_URL", ""))
+            status = check_for_config_update(
+                config_url,
+                getattr(config, "OTA_CONFIG_KEY", ""),
+                getattr(config, "OTA_TOKEN", ""),
+            )
+            statuses.append("config:%s" % status)
+            if status == "applied":
+                self.telemetry.log("ota_config_applied")
+                _sleep_ms(250)
+                machine.reset()
+                return "config:applied"
+
+        return ",".join(statuses) if statuses else "disabled"
 
     def _poll_state(self, now):
         started = time.ticks_ms()

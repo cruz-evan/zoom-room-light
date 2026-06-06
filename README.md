@@ -190,6 +190,22 @@ Deploy app files over USB while preserving board-local secrets:
 ./scripts/deploy_device.sh
 ```
 
+Provision Wi-Fi over USB without hard-coding it in `device/secrets.py`:
+
+```bash
+WIFI_SSID="your-wifi-name" WIFI_PASSWORD="your-wifi-password" ./scripts/deploy_device.sh --with-secrets
+```
+
+The manual GitHub Actions workflow `Provision Pico over USB` uses repository
+secrets named `WIFI_SSID` and `WIFI_PASSWORD` the same way when run on a
+self-hosted runner connected to the Pico. Set repository variable `STATE_URL`
+or `OTA_MANIFEST_URL` before running it.
+
+For Wi-Fi password rotation over public GitHub Pages, add repository secret
+`OTA_CONFIG_KEY` and provision the same value to each Pico once over USB. The
+`Pico W OTA` workflow then publishes encrypted `wifi-config.json`; the Pages
+artifact does not contain plaintext Wi-Fi credentials.
+
 ## Verification
 
 Run the supported test suites:

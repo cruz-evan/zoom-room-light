@@ -100,6 +100,17 @@ Provision or intentionally update `secrets.py` over USB only:
 ./scripts/deploy_device.sh --with-secrets
 ```
 
+To avoid hard-coding Wi-Fi credentials in local `device/secrets.py`, provide
+them as environment variables during provisioning. The deploy script renders a
+temporary `secrets.py`, uploads it to the board, and leaves the local file
+unchanged:
+
+```bash
+WIFI_SSID="your-wifi-name" \
+WIFI_PASSWORD="your-wifi-password" \
+./scripts/deploy_device.sh --with-secrets
+```
+
 `secrets.py` and `secrets.example.py` are never included in OTA bundles. The
 default USB deploy also skips them so app updates do not accidentally overwrite
 per-board Wi-Fi, token, identity, or hardware settings.
@@ -122,13 +133,15 @@ The firmware still accepts USB serial JSON-lines, and it can also poll a relay
 over Wi-Fi when `device/secrets.py` is present locally. `device/secrets.py` is
 ignored by git and must stay local/private.
 
-Create the local secrets file:
+Create the local secrets file for non-secret per-board settings:
 
 ```bash
 cp device/secrets.example.py device/secrets.py
 ```
 
-Fill in:
+Fill in. If you provision with `WIFI_SSID` and `WIFI_PASSWORD` environment
+variables, those two local values can stay as placeholders because the USB
+deploy script injects the real values into a temporary upload:
 
 ```python
 WIFI_SSID = "your-wifi-name"
@@ -358,6 +371,14 @@ OTA updates are for MicroPython app files in `device/*.py`. They do not update
 the MicroPython UF2 runtime and they deliberately exclude `device/secrets.py`
 and `device/secrets.example.py`.
 
+GitHub repository secrets named `WIFI_SSID` and `WIFI_PASSWORD` can be used by
+the manual `Provision Pico over USB` workflow and by the encrypted Wi-Fi config
+OTA artifact. That USB workflow must run on a self-hosted runner with the Pico
+connected over USB; GitHub-hosted runners cannot access your local board. Set at
+least one repository variable, `STATE_URL` or `OTA_MANIFEST_URL`, so the
+workflow does not upload placeholder network config from `secrets.example.py`.
+Optional secrets `DEVICE_TOKEN` and `OTA_TOKEN` are also injected when present.
+
 First-time OTA provisioning still needs USB because the board must already have
 `ota_client.py`, the updated `main.py`, and local secrets:
 
@@ -372,15 +393,19 @@ STATE_URL = "https://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/
 DEVICE_TOKEN = ""
 OTA_MANIFEST_URL = "https://cruz-evan.github.io/zoom-room-light/manifest.json"
 OTA_TOKEN = ""
+OTA_CONFIG_KEY = "long-random-shared-key"
 ```
 
 Leave `OTA_TOKEN` blank when using public GitHub Pages. Only set it if you route
 OTA through a protected endpoint that expects a low-privilege bearer token.
+`OTA_CONFIG_KEY` is different: it is a local decryption key for encrypted Wi-Fi
+config. Generate it once, store the same value as the GitHub repository secret
+`OTA_CONFIG_KEY`, and provision it to each board over USB.
 
 Then deploy over USB once:
 
 ```bash
-./scripts/deploy_device.sh
+WIFI_SSID="your-wifi-name" WIFI_PASSWORD="your-wifi-password" ./scripts/deploy_device.sh --with-secrets
 ```
 
 After that, normal app changes are wireless:
@@ -391,7 +416,65 @@ After that, normal app changes are wireless:
    with GitHub Pages.
 4. The Pico checks `OTA_MANIFEST_URL` every `OTA_CHECK_SECONDS` seconds
    (default: 60), downloads changed files, verifies SHA-256 and size, commits
-   the update, then resets.
+   the update, then resets. On the same cadence it also checks
+   `wifi-config.json`, decrypts it with `OTA_CONFIG_KEY`, writes
+   `wifi_profiles.json` when changed, and resets.
+
+## Encrypted Wi-Fi Config OTA
+
+The Pages site is public, so Wi-Fi credentials are never published in plain
+text. The OTA workflow writes `_site/wifi-config.json` containing only nonce,
+ciphertext, and authentication tag. The Pico decrypts it with the
+board-local `OTA_CONFIG_KEY`.
+
+Required GitHub repository secret:
+
+```text
+OTA_CONFIG_KEY      same long random value provisioned on every Pico
+```
+
+At least one complete Wi-Fi secret pair is required for the workflow to publish
+`wifi-config.json`. Recommended office-plus-hotspot setup:
+
+```text
+OFFICE_WIFI_SSID
+OFFICE_WIFI_PASSWORD
+PHONE_HOTSPOT_SSID
+PHONE_HOTSPOT_PASSWORD
+```
+
+The existing generic pair is still supported and works as the primary profile
+when no explicit office pair is set:
+
+```text
+WIFI_SSID
+WIFI_PASSWORD
+WIFI_FALLBACK_SSID
+WIFI_FALLBACK_PASSWORD
+```
+
+These phone-hotspot fallback names are also supported:
+
+```text
+FALLBACK_PHONE_HOTSPOT_WIFI_SSID
+FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD
+```
+
+The Pico tries saved encrypted OTA profiles first, in workflow order, then
+falls back to the bootstrap `WIFI_SSID` and `WIFI_PASSWORD` in `secrets.py`.
+Changing a GitHub secret does not automatically start a workflow. After changing
+a Wi-Fi secret, manually run `Pico W OTA`; the config payload version includes
+the workflow run ID so a rerun publishes a new encrypted payload even when app
+code did not change.
+
+Office password recovery flow:
+
+1. Turn on a hotspot already present in the Pico's saved profile list.
+2. Update the office Wi-Fi GitHub secret pair.
+3. Manually run the `Pico W OTA` workflow on `main`.
+4. Wait for the Pico to poll OTA over the hotspot, decrypt the new profile, and
+   reset.
+5. Turn off the hotspot after the Pico reconnects to office Wi-Fi.
 
 One-time GitHub repo setup: an admin for `cruz-evan/zoom-room-light` must enable
 Pages with GitHub Actions as the build source. From an admin-authenticated `gh`

@@ -49,6 +49,12 @@ DEVICE_TOKEN = ""
 OTA_MANIFEST_URL = "https://YOUR_GITHUB_USER.github.io/YOUR_REPO/manifest.json"
 OTA_TOKEN = ""
 
+# Shared key used to decrypt encrypted Wi-Fi config published to GitHub Pages.
+# Generate a long random value, store the same value as GitHub secret
+# OTA_CONFIG_KEY, and provision it once over USB. Do not publish this key.
+OTA_CONFIG_KEY = ""
+OTA_CONFIG_URL = ""
+
 # Optional on-device telemetry over UDP. The Pico can be powered from the wall
 # and still stream compact JSON logs over Wi-Fi to a laptop listener.
 #
