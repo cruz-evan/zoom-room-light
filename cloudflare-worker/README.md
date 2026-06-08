@@ -61,15 +61,16 @@ npx wrangler kv namespace create STATE_KV --preview
 Copy the generated `id` values into `wrangler.toml`.
 
 Set Worker secrets. Use the same Zoom webhook secret token shown in the Zoom
-app, and make `DEVICE_TOKEN` a random low-privilege value if you want the Pico
-polling endpoint protected.
+app for live meeting started/ended events. Use Microsoft Graph application
+credentials for schedule polling, and make `DEVICE_TOKEN` a random
+low-privilege value if you want the Pico polling endpoint protected.
 
 ```bash
 npx wrangler secret put ZOOM_WEBHOOK_SECRET_TOKEN
-npx wrangler secret put ZOOM_ACCOUNT_ID
-npx wrangler secret put ZOOM_CLIENT_ID
-npx wrangler secret put ZOOM_CLIENT_SECRET
-npx wrangler secret put ZOOM_SCHEDULE_USER_ID
+npx wrangler secret put MICROSOFT_TENANT_ID
+npx wrangler secret put MICROSOFT_CLIENT_ID
+npx wrangler secret put MICROSOFT_CLIENT_SECRET
+npx wrangler secret put MICROSOFT_CALENDAR_USER_ID
 npx wrangler secret put DEVICE_TOKEN
 npx wrangler secret put ADMIN_TOKEN
 ```
@@ -78,19 +79,22 @@ npx wrangler secret put ADMIN_TOKEN
 unset, those routes are disabled.
 
 The scheduled poller runs every minute from the Cron Trigger in `wrangler.toml`.
-It uses Zoom Server-to-Server OAuth to list the configured user's scheduled and
-upcoming meetings, then emits:
+It uses Microsoft Graph client-credentials auth to read the configured calendar
+user's `calendarView`, then emits:
 
 ```text
-starting_soon  when the next meeting starts within SCHEDULE_LOOKAHEAD_MINUTES
+starting_soon  when the next meeting starts within ACTIVE_MEETING_LOOKAHEAD_MINUTES during an active meeting,
+               or EMPTY_ROOM_LOOKAHEAD_MINUTES when the room is empty
 ending_soon    when the active scheduled meeting ends within ENDING_SOON_MINUTES
 in_progress    while Zoom says the current meeting is running
-off            after meeting.ended or when schedule warnings clear
+off            after meeting.ended when no next meeting is inside the empty-room window,
+               or when schedule warnings clear
 ```
 
-The Zoom app needs meeting read scopes for schedule polling, such as
-`meeting:read:admin` or the granular list-meetings/list-upcoming-meetings admin
-scopes shown by Zoom for the meetings APIs.
+The Microsoft app registration needs application permission to read the target
+calendar, for example `Calendars.Read`, with admin consent granted. Prefer an
+application access policy or equivalent tenant restriction so the app can read
+only the room calendar it needs.
 
 ## Deploy
 
@@ -122,9 +126,9 @@ The Worker supports Zoom `endpoint.url_validation` and verifies
 `x-zm-signature` for normal Zoom events.
 
 Real Zoom webhooks drive `meeting.started` and `meeting.ended`. Cloudflare Cron
-drives `starting_soon` and `ending_soon` from the Zoom schedule API. Cron never
-turns an active meeting off; `meeting.ended` is the source of truth for that
-transition.
+drives `starting_soon` and `ending_soon` from Microsoft calendar events. Cron
+never turns an active meeting off; `meeting.ended` is the source of truth for
+that transition.
 
 ## Verify Without Zoom
 

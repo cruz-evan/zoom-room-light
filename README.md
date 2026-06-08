@@ -4,9 +4,9 @@ A Zoom room status indicator for Raspberry Pi Pico W LED strips.
 
 The supported runtime is intentionally small:
 
-- `cloudflare-worker/` receives Zoom webhooks, polls Zoom schedules from
-  Cloudflare Cron, stores the current room state in Workers KV, and exposes the
-  Pico polling endpoint.
+- `cloudflare-worker/` receives Zoom webhooks, polls Microsoft calendar events
+  from Cloudflare Cron, stores the current room state in Workers KV, and exposes
+  the Pico polling endpoint.
 - `rp2-zoom-leds/device/` runs on the Pico W, polls `/device/state`, maps the
   reduced command to LED behavior, and supports OTA app-file updates.
 - `rp2-zoom-leds/host/` contains USB serial and telemetry tools for bench
@@ -112,8 +112,8 @@ contract:
 | Source | Input | Pico command |
 | --- | --- | --- |
 | Zoom webhook | `meeting.started` | `{"mode":"meeting_status","state":"in_progress"}` |
-| Zoom webhook | `meeting.ended` | `{"mode":"off"}` or `starting_soon` when another meeting is already queued |
-| Schedule poll | upcoming meeting inside `SCHEDULE_LOOKAHEAD_MINUTES` | `{"mode":"meeting_status","state":"starting_soon","minutes":5}` |
+| Zoom webhook | `meeting.ended` | `{"mode":"off"}` or `starting_soon` when the next scheduled meeting is within `EMPTY_ROOM_LOOKAHEAD_MINUTES` |
+| Schedule poll | upcoming meeting inside `ACTIVE_MEETING_LOOKAHEAD_MINUTES` or `EMPTY_ROOM_LOOKAHEAD_MINUTES` | `{"mode":"meeting_status","state":"starting_soon","minutes":5}` or `minutes:15` |
 | Schedule poll | active scheduled meeting inside `ENDING_SOON_MINUTES` | `{"mode":"meeting_status","state":"ending_soon","minutes":5}` |
 
 The protected simulation routes set the same states directly:

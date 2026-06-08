@@ -170,6 +170,74 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "meeting.ended");
   });
 
+  it("checks the schedule on meeting.ended and starts the empty-room warning when the next meeting is within 15 minutes", async () => {
+    const relayEnv = env({
+      MICROSOFT_TENANT_ID: "tenant",
+      MICROSOFT_CLIENT_ID: "client",
+      MICROSOFT_CLIENT_SECRET: "secret",
+      MICROSOFT_CALENDAR_USER_ID: "room@example.com",
+    });
+    const nextStart = new Date(Date.now() + 14 * 60 * 1000).toISOString();
+    const nextEnd = new Date(Date.now() + 44 * 60 * 1000).toISOString();
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+
+    await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/webhook", {
+        event: "meeting.started",
+        payload: { object: { id: "active", topic: "Active" } },
+      }),
+      relayEnv,
+    );
+
+    globalThis.fetch = async (url) => {
+      const rawUrl = String(url);
+      requestedUrls.push(rawUrl);
+      if (rawUrl === "https://login.microsoftonline.com/tenant/oauth2/v2.0/token") {
+        return new Response(JSON.stringify({ access_token: "schedule-token", expires_in: 3600 }), { status: 200 });
+      }
+      if (rawUrl.includes("https://graph.microsoft.com/v1.0/users/room%40example.com/calendarView?")) {
+        return new Response(
+          JSON.stringify({
+            value: [
+              {
+                id: "next",
+                subject: "Next",
+                start: { dateTime: nextStart, timeZone: "UTC" },
+                end: { dateTime: nextEnd, timeZone: "UTC" },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ meetings: [] }), { status: 200 });
+    };
+
+    try {
+      const response = await worker.fetch(
+        await signedZoomRequest("https://relay.test/zoom/webhook", {
+          event: "meeting.ended",
+          payload: { object: { id: "active", topic: "Active" } },
+        }),
+        relayEnv,
+      );
+      assert.equal(response.status, 200);
+
+      const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
+      assert.deepEqual(state.command, {
+        mode: "meeting_status",
+        state: "starting_soon",
+        minutes: 15,
+      });
+      assert.equal(state.last_event, "schedule.upcoming");
+      assert.ok(requestedUrls.some((url) => url === "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"));
+      assert.ok(requestedUrls.some((url) => url.includes("/users/room%40example.com/calendarView?")));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("ignores older Zoom events that arrive out of order", async () => {
     const relayEnv = env();
 
@@ -229,23 +297,87 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "schedule.upcoming");
   });
 
+  it("uses a 15 minute upcoming window for an empty room by default", () => {
+    const now = Date.parse("2026-06-04T20:00:00Z");
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "empty-room-warning",
+          topic: "Demo",
+          start_time: "2026-06-04T20:14:30Z",
+          duration: 30,
+        },
+      ],
+      { v: 1, command: { mode: "off" }, last_event: "meeting.ended" },
+      env(),
+      now,
+    );
+
+    assert.equal(schedule.upcoming.minutes, 15);
+    assert.equal(schedule.upcoming.meeting.id, "empty-room-warning");
+  });
+
+  it("uses a 5 minute upcoming window while a meeting is already active", () => {
+    const now = Date.parse("2026-06-04T20:00:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "in_progress" },
+      in_use: true,
+      active_meeting_id: "active",
+      active_topic: "Active",
+      last_event: "meeting.started",
+      source: "zoom",
+      meeting: { id: "active", topic: "Active" },
+    };
+    const outsideActiveWindow = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "too-far-out",
+          topic: "Demo",
+          start_time: "2026-06-04T20:14:30Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env(),
+      now,
+    );
+    const insideActiveWindow = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "active-room-warning",
+          topic: "Demo",
+          start_time: "2026-06-04T20:04:30Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env(),
+      now,
+    );
+
+    assert.equal(outsideActiveWindow.upcoming, null);
+    assert.equal(insideActiveWindow.upcoming.minutes, 5);
+    assert.equal(insideActiveWindow.upcoming.meeting.id, "active-room-warning");
+  });
+
   it("maps active meetings near scheduled end to ending_soon", () => {
     const now = Date.parse("2026-06-04T20:25:00Z");
     const current = {
       v: 1,
       command: { mode: "meeting_status", state: "in_progress" },
       in_use: true,
-      active_meeting_id: "ending-soon",
+      active_meeting_id: "zoom-active-id",
       active_topic: "Demo",
       last_event: "meeting.started",
       source: "zoom",
       zoom_event_ts: now - 25 * 60000,
-      meeting: { id: "ending-soon", topic: "Demo" },
+      meeting: { id: "zoom-active-id", topic: "Demo" },
     };
     const schedule = testInternals.scheduleStatusFromMeetings(
       [
         {
-          id: "ending-soon",
+          id: "calendar-event-id",
           topic: "Demo",
           start_time: "2026-06-04T20:00:00Z",
           duration: 30,
@@ -327,20 +459,24 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "schedule.end_clear");
   });
 
-  it("loads scheduled meetings when upcoming endpoints are empty", async () => {
+  it("loads scheduled meetings from Microsoft calendar", async () => {
     const originalFetch = globalThis.fetch;
     const requestedUrls = [];
     globalThis.fetch = async (url) => {
       requestedUrls.push(String(url));
-      if (String(url).includes("type=scheduled")) {
+      if (String(url) === "https://login.microsoftonline.com/list-tenant/oauth2/v2.0/token") {
+        return new Response(JSON.stringify({ access_token: "graph-token", expires_in: 3600 }), { status: 200 });
+      }
+      if (String(url).includes("https://graph.microsoft.com/v1.0/users/room%40example.com/calendarView?")) {
         return new Response(
           JSON.stringify({
-            meetings: [
+            value: [
               {
                 id: "ended-active",
-                topic: "Demo",
-                start_time: "2026-06-04T23:30:00Z",
-                duration: 4,
+                iCalUId: "ical-ended-active",
+                subject: "Demo",
+                start: { dateTime: "2026-06-04T23:30:00.0000000", timeZone: "UTC" },
+                end: { dateTime: "2026-06-04T23:34:00.0000000", timeZone: "UTC" },
               },
             ],
           }),
@@ -351,12 +487,25 @@ describe("Cloudflare Worker relay", () => {
     };
 
     try {
-      const meetings = await testInternals.listZoomScheduleMeetings(env(), "token");
-      assert.deepEqual(
-        meetings.map((meeting) => meeting.id),
-        ["ended-active"],
+      const meetings = await testInternals.listScheduleMeetings(
+        env({
+          MICROSOFT_TENANT_ID: "list-tenant",
+          MICROSOFT_CLIENT_ID: "list-client",
+          MICROSOFT_CLIENT_SECRET: "list-secret",
+          MICROSOFT_CALENDAR_USER_ID: "room@example.com",
+        }),
+        Date.parse("2026-06-04T23:31:00Z"),
       );
-      assert.ok(requestedUrls.some((url) => url.includes("type=scheduled")));
+      assert.deepEqual(meetings, [
+        {
+          id: "ended-active",
+          uuid: "ical-ended-active",
+          topic: "Demo",
+          start_time: "2026-06-04T23:30:00.000Z",
+          duration: 4,
+        },
+      ]);
+      assert.ok(requestedUrls.some((url) => url.includes("/users/room%40example.com/calendarView?")));
     } finally {
       globalThis.fetch = originalFetch;
     }

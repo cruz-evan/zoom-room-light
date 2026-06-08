@@ -1,17 +1,19 @@
 const STATE_KEY = "current-state";
 const DEFAULT_POLL_SECONDS = 5;
 const SIGNATURE_TOLERANCE_SECONDS = 300;
-const DEFAULT_SCHEDULE_LOOKAHEAD_MINUTES = 5;
+const DEFAULT_ACTIVE_MEETING_LOOKAHEAD_MINUTES = 5;
+const DEFAULT_EMPTY_ROOM_LOOKAHEAD_MINUTES = 15;
 const DEFAULT_ENDING_SOON_MINUTES = 5;
-const ZOOM_API_BASE = "https://api.zoom.us/v2";
-const ZOOM_TOKEN_URL = "https://zoom.us/oauth/token";
+const DEFAULT_CALENDAR_LOOKBACK_MINUTES = 720;
+const DEFAULT_CALENDAR_LOOKAHEAD_MINUTES = 240;
+const MICROSOFT_GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
 
-let zoomTokenCache = null;
+let microsoftTokenCache = null;
 
 export default {
   async fetch(request, env) {
@@ -130,9 +132,40 @@ async function handleZoomWebhook(request, env) {
     return jsonResponse({ ok: true, stale: true, state: deviceStateResponse(current, env) });
   }
 
-  await writeState(env, state);
-  logStateTransition("zoom_webhook", current, state, { zoom_event: event || "missing" });
-  return jsonResponse({ ok: true, state: deviceStateResponse(state, env) });
+  const next = await applyPostZoomEventScheduleCheck(event, state, env);
+
+  await writeState(env, next);
+  logStateTransition("zoom_webhook", current, next, { zoom_event: event || "missing" });
+  return jsonResponse({ ok: true, state: deviceStateResponse(next, env) });
+}
+
+async function applyPostZoomEventScheduleCheck(event, state, env) {
+  if (event !== "meeting.ended" || !hasScheduleConfig(env)) {
+    return state;
+  }
+
+  try {
+    const nowMs = Date.now();
+    const meetings = await listScheduleMeetings(env, nowMs);
+    const schedule = scheduleStatusFromMeetings(meetings, state, env, nowMs);
+    const next = stateFromScheduleStatus(schedule, state);
+
+    logRelayEvent("zoom_webhook_schedule_check", {
+      zoom_event: event,
+      meeting_count: meetings.length,
+      schedule: publicScheduleStatus(schedule),
+      current: logStateFields(state),
+      next: logStateFields(next),
+    });
+    return next;
+  } catch (error) {
+    logRelayEvent("zoom_webhook_schedule_check_error", {
+      zoom_event: event,
+      error: errorMessage(error),
+      state: logStateFields(state),
+    });
+    return state;
+  }
 }
 
 async function handleUrlValidation(payload, secretToken) {
@@ -333,24 +366,24 @@ export async function runSchedulePoll(env, options = {}) {
   const checkedAt = utcNow();
   const current = await readState(env);
 
-  if (!hasZoomScheduleConfig(env)) {
+  if (!hasScheduleConfig(env)) {
     logRelayEvent("schedule_poll_skipped", {
       reason: options.reason || "schedule",
-      error: "missing_zoom_schedule_config",
+      error: "missing_microsoft_calendar_config",
       current: logStateFields(current),
     });
     return {
       ok: false,
-      error: "missing_zoom_schedule_config",
+      error: "missing_microsoft_calendar_config",
       checked_at: checkedAt,
       state: deviceStateResponse(current, env),
     };
   }
 
   try {
-    const accessToken = await getZoomAccessToken(env);
-    const meetings = await listZoomScheduleMeetings(env, accessToken);
-    const schedule = scheduleStatusFromMeetings(meetings, current, env, options.nowMs ?? Date.now());
+    const nowMs = options.nowMs ?? Date.now();
+    const meetings = await listScheduleMeetings(env, nowMs);
+    const schedule = scheduleStatusFromMeetings(meetings, current, env, nowMs);
     const next = stateFromScheduleStatus(schedule, current);
     const wrote = shouldWriteState(current, next);
 
@@ -397,7 +430,7 @@ function scheduleStatusFromMeetings(meetings, currentState, env, nowMs = Date.no
   const sortedMeetings = sortMeetings(meetings);
   const now = new Date(nowMs);
   return {
-    upcoming: nextUpcomingMeeting(sortedMeetings, now, scheduleLookaheadMinutes(env)),
+    upcoming: nextUpcomingMeeting(sortedMeetings, now, upcomingLookaheadMinutes(env, currentState)),
     ending: endingSoonMeeting(sortedMeetings, currentState, now, endingSoonMinutes(env)),
   };
 }
@@ -612,6 +645,7 @@ function nextUpcomingMeeting(meetings, now, lookaheadMinutes) {
 function endingSoonMeeting(meetings, currentState, now, lookaheadMinutes) {
   const activeMeeting = activeMeetingFromState(currentState);
   const lookaheadMs = lookaheadMinutes * 60 * 1000;
+  const shouldRequireSameMeeting = Boolean(activeMeeting.id || activeMeeting.uuid) && isScheduleDrivenState(currentState);
 
   for (const meeting of meetings) {
     const start = parseZoomTime(meeting.start_time);
@@ -619,7 +653,7 @@ function endingSoonMeeting(meetings, currentState, now, lookaheadMinutes) {
     if (start === null || durationMinutes === null) {
       continue;
     }
-    if (activeMeeting.id || activeMeeting.uuid) {
+    if (shouldRequireSameMeeting) {
       const candidate = normalizedMeeting(meeting);
       if (!sameMeeting(activeMeeting, candidate)) {
         continue;
@@ -647,146 +681,123 @@ function endingSoonMeeting(meetings, currentState, now, lookaheadMinutes) {
   return null;
 }
 
-async function getZoomAccessToken(env) {
+async function getMicrosoftAccessToken(env) {
   const now = Date.now();
-  if (zoomTokenCache && zoomTokenCache.expiresAt > now + 60000) {
-    return zoomTokenCache.accessToken;
+  const tenantId = String(env.MICROSOFT_TENANT_ID || "").trim();
+  const clientId = String(env.MICROSOFT_CLIENT_ID || "").trim();
+  const clientSecret = String(env.MICROSOFT_CLIENT_SECRET || "").trim();
+  const cacheKey = `${tenantId}:${clientId}`;
+
+  if (microsoftTokenCache && microsoftTokenCache.cacheKey === cacheKey && microsoftTokenCache.expiresAt > now + 60000) {
+    return microsoftTokenCache.accessToken;
   }
 
   const body = new URLSearchParams({
-    grant_type: "account_credentials",
-    account_id: env.ZOOM_ACCOUNT_ID,
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: "https://graph.microsoft.com/.default",
   });
-  const credentials = btoa(`${env.ZOOM_CLIENT_ID}:${env.ZOOM_CLIENT_SECRET}`);
-  const response = await fetch(ZOOM_TOKEN_URL, {
+
+  const response = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
     method: "POST",
     headers: {
-      Authorization: `Basic ${credentials}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body,
   });
-  const json = await readZoomJson(response);
+  const json = await readJsonResponse(response, "Microsoft token");
   const accessToken = String(json.access_token || "");
   if (!accessToken) {
-    throw new Error("Zoom token response did not include an access_token");
+    throw new Error("Microsoft token response did not include an access_token");
   }
 
   const expiresIn = parsePositiveInteger(json.expires_in) || 3600;
-  zoomTokenCache = {
+  microsoftTokenCache = {
     accessToken,
+    cacheKey,
     expiresAt: now + expiresIn * 1000,
   };
   return accessToken;
 }
 
-async function listZoomScheduleMeetings(env, accessToken) {
-  const userId = env.ZOOM_SCHEDULE_USER_ID || env.ZOOM_USER_ID || "me";
-  const results = [];
-  const errors = [];
+async function listScheduleMeetings(env, nowMs = Date.now()) {
+  const accessToken = await getMicrosoftAccessToken(env);
+  const events = await listMicrosoftCalendarEvents(env, accessToken, nowMs);
+  return dedupeMeetings(events.map(graphEventToMeeting).filter(Boolean));
+}
 
-  for (const loader of [listZoomUserMeetings, listZoomUpcomingMeetings, listZoomScheduledMeetings]) {
-    try {
-      results.push(...(await loader(userId, accessToken)));
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
-    }
+async function listMicrosoftCalendarEvents(env, accessToken, nowMs) {
+  const userId = String(env.MICROSOFT_CALENDAR_USER_ID || "").trim();
+  const minimumLookbackMinutes = endingSoonMinutes(env);
+  const minimumLookaheadMinutes = Math.max(activeMeetingLookaheadMinutes(env), emptyRoomLookaheadMinutes(env));
+  const lookbackMinutes = Math.max(
+    minimumLookbackMinutes,
+    positiveMinutes(env.MICROSOFT_CALENDAR_LOOKBACK_MINUTES, DEFAULT_CALENDAR_LOOKBACK_MINUTES),
+  );
+  const lookaheadMinutes = Math.max(
+    minimumLookaheadMinutes,
+    positiveMinutes(env.MICROSOFT_CALENDAR_LOOKAHEAD_MINUTES, DEFAULT_CALENDAR_LOOKAHEAD_MINUTES),
+  );
+  const startDateTime = new Date(nowMs - lookbackMinutes * 60000).toISOString();
+  const endDateTime = new Date(nowMs + lookaheadMinutes * 60000).toISOString();
+  const params = new URLSearchParams({
+    startDateTime,
+    endDateTime,
+    "$orderby": "start/dateTime",
+    "$top": "100",
+  });
+  const events = [];
+  let url = `${MICROSOFT_GRAPH_BASE}/users/${encodeURIComponent(userId)}/calendarView?${params.toString()}`;
+
+  while (url) {
+    const json = await microsoftGetJson(url, accessToken);
+    events.push(...arrayValue(json.value));
+    url = typeof json["@odata.nextLink"] === "string" ? json["@odata.nextLink"] : "";
   }
 
-  if (!results.length && errors.length === 3) {
-    throw new Error(`Zoom schedule polling failed: ${errors.join("; ")}`);
-  }
-
-  return dedupeMeetings(results);
+  return events;
 }
 
-async function listZoomUserMeetings(userId, accessToken) {
-  const meetings = [];
-  let nextPageToken = "";
-
-  do {
-    const params = new URLSearchParams({
-      type: "upcoming",
-      page_size: "300",
-    });
-    if (nextPageToken) {
-      params.set("next_page_token", nextPageToken);
-    }
-
-    const json = await zoomGetJson(
-      `/users/${encodeURIComponent(userId)}/meetings?${params.toString()}`,
-      accessToken,
-    );
-    meetings.push(...arrayValue(json.meetings));
-    nextPageToken = String(json.next_page_token || "");
-  } while (nextPageToken);
-
-  return meetings;
-}
-
-async function listZoomScheduledMeetings(userId, accessToken) {
-  const meetings = [];
-  let nextPageToken = "";
-
-  do {
-    const params = new URLSearchParams({
-      type: "scheduled",
-      page_size: "300",
-    });
-    if (nextPageToken) {
-      params.set("next_page_token", nextPageToken);
-    }
-
-    const json = await zoomGetJson(
-      `/users/${encodeURIComponent(userId)}/meetings?${params.toString()}`,
-      accessToken,
-    );
-    meetings.push(...arrayValue(json.meetings));
-    nextPageToken = String(json.next_page_token || "");
-  } while (nextPageToken);
-
-  return meetings;
-}
-
-async function listZoomUpcomingMeetings(userId, accessToken) {
-  const meetings = [];
-  let nextPageToken = "";
-
-  do {
-    const params = new URLSearchParams({ page_size: "300" });
-    if (nextPageToken) {
-      params.set("next_page_token", nextPageToken);
-    }
-
-    const json = await zoomGetJson(
-      `/users/${encodeURIComponent(userId)}/upcoming_meetings?${params.toString()}`,
-      accessToken,
-    );
-    meetings.push(...arrayValue(json.meetings));
-    nextPageToken = String(json.next_page_token || "");
-  } while (nextPageToken);
-
-  return meetings;
-}
-
-async function zoomGetJson(path, accessToken) {
-  const response = await fetch(`${ZOOM_API_BASE}${path}`, {
+async function microsoftGetJson(url, accessToken) {
+  const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
+      Prefer: 'outlook.timezone="UTC"',
     },
   });
-  return readZoomJson(response);
+  return readJsonResponse(response, "Microsoft Graph");
 }
 
-async function readZoomJson(response) {
+async function readJsonResponse(response, source) {
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    const message = json.message || json.reason || text || response.statusText;
-    throw new Error(`Zoom API HTTP ${response.status}: ${message}`);
+    const message = json.error?.message || json.error_description || json.message || json.reason || text || response.statusText;
+    throw new Error(`${source} HTTP ${response.status}: ${message}`);
   }
   return json;
+}
+
+function graphEventToMeeting(event) {
+  if (!isObject(event) || event.isCancelled === true) {
+    return null;
+  }
+
+  const start = parseMicrosoftDateTime(event.start);
+  const end = parseMicrosoftDateTime(event.end);
+  if (start === null || end === null || end.getTime() <= start.getTime()) {
+    return null;
+  }
+
+  return {
+    id: String(event.id || ""),
+    uuid: String(event.iCalUId || ""),
+    topic: String(event.subject || ""),
+    start_time: start.toISOString(),
+    duration: Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 60000)),
+  };
 }
 
 function dedupeMeetings(meetings) {
@@ -862,17 +873,34 @@ function shouldWriteState(currentState, nextState) {
   );
 }
 
-function hasZoomScheduleConfig(env) {
+function hasScheduleConfig(env) {
   return Boolean(
-    env.ZOOM_ACCOUNT_ID &&
-      env.ZOOM_CLIENT_ID &&
-      env.ZOOM_CLIENT_SECRET &&
-      (env.ZOOM_SCHEDULE_USER_ID || env.ZOOM_USER_ID),
+    env.MICROSOFT_TENANT_ID &&
+      env.MICROSOFT_CLIENT_ID &&
+      env.MICROSOFT_CLIENT_SECRET &&
+      env.MICROSOFT_CALENDAR_USER_ID,
   );
 }
 
-function scheduleLookaheadMinutes(env) {
-  return positiveMinutes(env.SCHEDULE_LOOKAHEAD_MINUTES, DEFAULT_SCHEDULE_LOOKAHEAD_MINUTES);
+function upcomingLookaheadMinutes(env, currentState) {
+  if (isActiveState(currentState)) {
+    return activeMeetingLookaheadMinutes(env);
+  }
+  return emptyRoomLookaheadMinutes(env);
+}
+
+function activeMeetingLookaheadMinutes(env) {
+  return positiveMinutes(
+    env.ACTIVE_MEETING_LOOKAHEAD_MINUTES ?? env.SCHEDULE_LOOKAHEAD_MINUTES,
+    DEFAULT_ACTIVE_MEETING_LOOKAHEAD_MINUTES,
+  );
+}
+
+function emptyRoomLookaheadMinutes(env) {
+  return positiveMinutes(
+    env.EMPTY_ROOM_LOOKAHEAD_MINUTES ?? env.SCHEDULE_LOOKAHEAD_MINUTES,
+    DEFAULT_EMPTY_ROOM_LOOKAHEAD_MINUTES,
+  );
 }
 
 function endingSoonMinutes(env) {
@@ -951,6 +979,20 @@ function parseZoomTime(value) {
   }
 
   const date = new Date(String(value).replace("Z", "+00:00"));
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
+function parseMicrosoftDateTime(value) {
+  if (!isObject(value) || !value.dateTime) {
+    return null;
+  }
+
+  const raw = String(value.dateTime);
+  const hasOffset = /(?:Z|[+-]\d{2}:\d{2})$/i.test(raw);
+  const date = new Date(hasOffset ? raw : `${raw}Z`);
   if (Number.isNaN(date.getTime())) {
     return null;
   }
@@ -1136,8 +1178,9 @@ function constantTimeEqual(left, right) {
 }
 
 export const testInternals = {
+  graphEventToMeeting,
   hmacSha256Hex,
-  listZoomScheduleMeetings,
+  listScheduleMeetings,
   scheduleStatusFromMeetings,
   stateFromScheduleStatus,
   verifyZoomSignature,

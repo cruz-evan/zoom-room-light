@@ -1,3 +1,7 @@
 ZOOM_WEBHOOK_SECRET_TOKEN=replace-with-zoom-webhook-secret-token
+MICROSOFT_TENANT_ID=replace-with-azure-tenant-id
+MICROSOFT_CLIENT_ID=replace-with-azure-app-client-id
+MICROSOFT_CLIENT_SECRET=replace-with-azure-app-client-secret
+MICROSOFT_CALENDAR_USER_ID=room@example.com
 DEVICE_TOKEN=
 ADMIN_TOKEN=replace-with-a-random-admin-token-for-simulate-endpoints

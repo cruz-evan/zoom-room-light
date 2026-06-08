@@ -26,7 +26,7 @@ Supported serial commands:
 {"mode":"meeting_status","state":"ending_soon","minutes":5}
 ```
 
-The newer `meeting_status` mode is the preferred final-product contract. The host/Zoom side decides whether a meeting is within the 5 minute start/end window, then the RP2 renders the behavior:
+The newer `meeting_status` mode is the preferred final-product contract. The host/Zoom side decides whether a meeting is within the configured start/end window, then the RP2 renders the behavior:
 
 - `starting_soon`: cyan moving block with a short tail for an impending meeting.
 - `in_progress`: full-strip slow blue pulse for an active meeting.

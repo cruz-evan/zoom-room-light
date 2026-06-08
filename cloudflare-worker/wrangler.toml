@@ -4,6 +4,10 @@ compatibility_date = "2026-06-01"
 
 workers_dev = true
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [[kv_namespaces]]
 binding = "STATE_KV"
 id = "44b7a88f011f4a7487b55c7b82ed1eb8"
@@ -11,7 +15,8 @@ preview_id = "97f844ce12684d928f33c5720c48ed16"
 
 [vars]
 POLL_SECONDS = "5"
-SCHEDULE_LOOKAHEAD_MINUTES = "5"
+ACTIVE_MEETING_LOOKAHEAD_MINUTES = "5"
+EMPTY_ROOM_LOOKAHEAD_MINUTES = "15"
 ENDING_SOON_MINUTES = "5"
 
 [triggers]
