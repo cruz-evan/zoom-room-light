@@ -35,9 +35,11 @@ jobs:
       MICROSOFT_CALENDAR_USER_ID: ${{ secrets.MICROSOFT_CALENDAR_USER_ID }}
       DEVICE_TOKEN: ${{ secrets.DEVICE_TOKEN }}
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-      POLL_SECONDS: ${{ secrets.POLL_SECONDS }}
-      SCHEDULE_LOOKAHEAD_MINUTES: ${{ secrets.SCHEDULE_LOOKAHEAD_MINUTES }}
-      ENDING_SOON_MINUTES: ${{ secrets.ENDING_SOON_MINUTES }}
+      POLL_SECONDS: ${{ vars.POLL_SECONDS || secrets.POLL_SECONDS }}
+      SCHEDULE_LOOKAHEAD_MINUTES: ${{ vars.SCHEDULE_LOOKAHEAD_MINUTES || secrets.SCHEDULE_LOOKAHEAD_MINUTES }}
+      ACTIVE_MEETING_LOOKAHEAD_MINUTES: ${{ vars.ACTIVE_MEETING_LOOKAHEAD_MINUTES }}
+      EMPTY_ROOM_LOOKAHEAD_MINUTES: ${{ vars.EMPTY_ROOM_LOOKAHEAD_MINUTES }}
+      ENDING_SOON_MINUTES: ${{ vars.ENDING_SOON_MINUTES || secrets.ENDING_SOON_MINUTES }}
 
     defaults:
       run:
@@ -99,10 +101,50 @@ jobs:
           put_secret MICROSOFT_CALENDAR_USER_ID "$MICROSOFT_CALENDAR_USER_ID"
           put_secret DEVICE_TOKEN "$DEVICE_TOKEN"
           put_secret ADMIN_TOKEN "$ADMIN_TOKEN"
-          put_secret POLL_SECONDS "$POLL_SECONDS"
-          put_secret SCHEDULE_LOOKAHEAD_MINUTES "$SCHEDULE_LOOKAHEAD_MINUTES"
-          put_secret ENDING_SOON_MINUTES "$ENDING_SOON_MINUTES"
+
+      - name: Remove legacy timing secrets
+        if: steps.cloudflare.outputs.deploy == 'true'
+        run: |
+          set -eu
+
+          for name in \
+            POLL_SECONDS \
+            SCHEDULE_LOOKAHEAD_MINUTES \
+            ACTIVE_MEETING_LOOKAHEAD_MINUTES \
+            EMPTY_ROOM_LOOKAHEAD_MINUTES \
+            ENDING_SOON_MINUTES
+          do
+            echo "Removing timing secret if present: $name"
+            if printf 'y\n' | npx wrangler secret delete "$name"; then
+              echo "Removed legacy timing secret: $name"
+            else
+              echo "No removable timing secret found: $name"
+            fi
+          done
 
       - name: Deploy Worker
         if: steps.cloudflare.outputs.deploy == 'true'
-        run: npx wrangler deploy
+        run: |
+          set -eu
+
+          deploy_args=()
+
+          add_var() {
+            name="$1"
+            value="$2"
+            if [ -n "$value" ]; then
+              deploy_args+=(--var "$name:$value")
+            else
+              echo "Using wrangler.toml default for var: $name"
+            fi
+          }
+
+          active_lookahead="${ACTIVE_MEETING_LOOKAHEAD_MINUTES:-${SCHEDULE_LOOKAHEAD_MINUTES:-}}"
+          empty_lookahead="${EMPTY_ROOM_LOOKAHEAD_MINUTES:-${SCHEDULE_LOOKAHEAD_MINUTES:-}}"
+
+          add_var POLL_SECONDS "$POLL_SECONDS"
+          add_var ACTIVE_MEETING_LOOKAHEAD_MINUTES "$active_lookahead"
+          add_var EMPTY_ROOM_LOOKAHEAD_MINUTES "$empty_lookahead"
+          add_var ENDING_SOON_MINUTES "$ENDING_SOON_MINUTES"
+
+          npx wrangler deploy "${deploy_args[@]}"
