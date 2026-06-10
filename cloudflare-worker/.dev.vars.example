@@ -1,4 +1,10 @@
 ZOOM_WEBHOOK_SECRET_TOKEN=replace-with-zoom-webhook-secret-token
+# Optional comma-separated case-insensitive topic substrings. When set, all valid
+# Zoom webhooks are retained in KV history, but only matching topics update room state.
+ZOOM_WEBHOOK_TOPIC_FILTER=
+# Optional per-device filters. Keys match the webhook device_id query param or
+# /zoom/<device_id>/webhook path segment. Blank/missing entries do not filter.
+ZOOM_WEBHOOK_TOPIC_FILTERS={"board-room-a":["Board Room A"],"board-room-b":["Board Room B"]}
 MICROSOFT_TENANT_ID=replace-with-azure-tenant-id
 MICROSOFT_CLIENT_ID=replace-with-azure-app-client-id
 MICROSOFT_CLIENT_SECRET=replace-with-azure-app-client-secret

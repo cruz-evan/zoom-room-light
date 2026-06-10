@@ -67,8 +67,9 @@ export async function handleRequest(request, env, ctx) {
     return jsonResponse(result, result.ok ? 200 : 502);
   }
 
-  if (request.method === "POST" && path === "/zoom/webhook") {
-    return handleZoomWebhook(request, env, ctx);
+  const zoomWebhookDeviceId = zoomWebhookDeviceIdFromRequest(url, path);
+  if (request.method === "POST" && zoomWebhookDeviceId !== null) {
+    return handleZoomWebhook(request, env, ctx, zoomWebhookDeviceId);
   }
 
   if ((request.method === "GET" || request.method === "POST") && path.startsWith("/simulate/")) {
@@ -78,7 +79,7 @@ export async function handleRequest(request, env, ctx) {
   return jsonResponse({ error: "not_found" }, 404);
 }
 
-async function handleZoomWebhook(request, env, ctx) {
+async function handleZoomWebhook(request, env, ctx, deviceId = "") {
   const rawBody = await request.text();
   let body;
 
@@ -114,6 +115,26 @@ async function handleZoomWebhook(request, env, ctx) {
   }
 
   const current = await readState(env);
+  const topicFilter = zoomWebhookTopicFilter(env, deviceId);
+  if (!zoomWebhookMatchesTopicFilter(payload, topicFilter)) {
+    logRelayEvent("zoom_webhook_filtered", {
+      zoom_event: event || "missing",
+      device_id: deviceId,
+      topic: String(extractMeeting(payload).topic || ""),
+      filter: topicFilter,
+      current: logStateFields(current),
+    });
+    await recordZoomWebhookHistory(env, ctx, {
+      body,
+      event,
+      outcome: "filtered",
+      currentState: current,
+      responseState: current,
+      metadata: zoomWebhookFilterMetadata(payload, topicFilter, false, deviceId),
+    });
+    return jsonResponse({ ok: true, filtered: true, state: deviceStateResponse(current, env) });
+  }
+
   const state = stateFromZoomEvent(event, payload, env, zoomEventTimestamp(body.event_ts), current);
   if (state === null) {
     logRelayEvent("zoom_webhook_ignored", {
@@ -126,6 +147,7 @@ async function handleZoomWebhook(request, env, ctx) {
       outcome: "ignored",
       currentState: current,
       responseState: current,
+      metadata: zoomWebhookFilterMetadata(payload, topicFilter, true, deviceId),
     });
     return jsonResponse({ ok: true, ignored: true, state: deviceStateResponse(current, env) });
   }
@@ -145,6 +167,7 @@ async function handleZoomWebhook(request, env, ctx) {
       currentState: current,
       nextState: state,
       responseState: current,
+      metadata: zoomWebhookFilterMetadata(payload, topicFilter, true, deviceId),
     });
     return jsonResponse({ ok: true, stale: true, state: deviceStateResponse(current, env) });
   }
@@ -159,6 +182,7 @@ async function handleZoomWebhook(request, env, ctx) {
     currentState: current,
     nextState: next,
     responseState: next,
+    metadata: zoomWebhookFilterMetadata(payload, topicFilter, true, deviceId),
   });
   logStateTransition("zoom_webhook", current, next, { zoom_event: event || "missing" });
   return jsonResponse({ ok: true, state: deviceStateResponse(next, env) });
@@ -394,10 +418,12 @@ async function recordZoomWebhookHistory(env, ctx, {
   currentState = {},
   nextState = null,
   responseState = {},
+  metadata = {},
 }) {
   assertKv(env);
   const receivedAt = utcNow();
   const zoomEventTs = zoomEventTimestamp(body.event_ts);
+  const payload = isObject(body.payload) ? body.payload : {};
   const record = {
     v: 1,
     received_at: receivedAt,
@@ -405,6 +431,8 @@ async function recordZoomWebhookHistory(env, ctx, {
     outcome,
     zoom_event_ts: zoomEventTs,
     zoom_event_at: new Date(zoomEventTs).toISOString(),
+    meeting: extractMeeting(payload),
+    metadata,
     payload: body,
     current: logStateFields(currentState),
     next: nextState ? logStateFields(nextState) : null,
@@ -441,6 +469,75 @@ function zoomWebhookHistoryKey(receivedAt, event) {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${ZOOM_WEBHOOK_HISTORY_PREFIX}${timestamp}:${eventName}:${id}`;
+}
+
+function zoomWebhookDeviceIdFromRequest(url, path) {
+  if (path === "/zoom/webhook") {
+    return String(url.searchParams.get("device_id") || "").trim();
+  }
+
+  const match = path.match(/^\/zoom\/([^/]+)\/webhook$/);
+  if (!match) {
+    return null;
+  }
+  return decodeURIComponent(match[1]).trim();
+}
+
+function zoomWebhookTopicFilter(env, deviceId = "") {
+  const deviceFilters = zoomWebhookTopicFilterMap(env);
+  const normalizedDeviceId = String(deviceId || "").trim();
+  if (normalizedDeviceId && Object.prototype.hasOwnProperty.call(deviceFilters, normalizedDeviceId)) {
+    return topicFilterList(deviceFilters[normalizedDeviceId]);
+  }
+  return topicFilterList(env.ZOOM_WEBHOOK_TOPIC_FILTER);
+}
+
+function zoomWebhookTopicFilterMap(env) {
+  const raw = env.ZOOM_WEBHOOK_TOPIC_FILTERS;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(String(raw));
+    return isObject(parsed) ? parsed : {};
+  } catch (error) {
+    logRelayEvent("zoom_webhook_topic_filter_config_error", {
+      error: errorMessage(error),
+    });
+    return {};
+  }
+}
+
+function topicFilterList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (value === undefined || value === null) {
+    return [];
+  }
+  return String(value)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function zoomWebhookMatchesTopicFilter(payload, filters) {
+  if (filters.length === 0) {
+    return true;
+  }
+  const topic = String(extractMeeting(payload).topic || "").toLowerCase();
+  return filters.some((filter) => topic.includes(filter.toLowerCase()));
+}
+
+function zoomWebhookFilterMetadata(payload, filters, matched, deviceId = "") {
+  return {
+    device_id: String(deviceId || ""),
+    topic_filter_configured: filters.length > 0,
+    topic_filter_matched: matched,
+    topic_filter: filters,
+    topic: String(extractMeeting(payload).topic || ""),
+  };
 }
 
 export async function runSchedulePoll(env, options = {}) {

@@ -78,6 +78,21 @@ npx wrangler secret put ADMIN_TOKEN
 `ADMIN_TOKEN` protects the simulate endpoints and `/schedule/check`. If it is
 unset, those routes are disabled.
 
+If the Zoom app receives org-wide meeting webhooks, set per-device topic filters
+with `ZOOM_WEBHOOK_TOPIC_FILTERS` and identify the target device in the webhook
+URL, for example `/zoom/board-room-a/webhook` or
+`/zoom/webhook?device_id=board-room-a`.
+
+```text
+ZOOM_WEBHOOK_TOPIC_FILTERS={"board-room-a":["Board Room A"],"board-room-b":["Board Room B"]}
+```
+
+All valid Zoom webhooks are still retained in seven-day KV history. Only matching
+topics update the live room state. If `ZOOM_WEBHOOK_TOPIC_FILTERS`,
+`ZOOM_WEBHOOK_TOPIC_FILTER`, or a specific device entry is missing, blank, or
+null, no topic filtering is applied for that request. `ZOOM_WEBHOOK_TOPIC_FILTER`
+is still supported as a global fallback.
+
 The scheduled poller runs every minute from the Cron Trigger in `wrangler.toml`.
 It uses Microsoft Graph client-credentials auth to read the configured calendar
 user's `calendarView`, then emits:

@@ -177,6 +177,132 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(record.state.active_meeting_id, "123");
   });
 
+  it("records mismatched meeting.ended webhooks without changing active state", async () => {
+    const relayEnv = env();
+    await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/webhook", {
+        event: "meeting.started",
+        payload: { object: { id: "active", topic: "Room meeting" } },
+      }),
+      relayEnv,
+    );
+
+    const response = await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/webhook", {
+        event: "meeting.ended",
+        payload: { object: { id: "other", topic: "Org meeting" } },
+      }),
+      relayEnv,
+    );
+    const responseBody = await json(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(responseBody.ignored, true);
+
+    const historyRecords = [...relayEnv.STATE_KV.values.entries()]
+      .filter(([key]) => key.startsWith("zoom-webhook:"))
+      .map(([, value]) => JSON.parse(value));
+    const ignoredEnd = historyRecords.find((record) => record.event === "meeting.ended");
+    assert.equal(ignoredEnd.outcome, "ignored");
+    assert.equal(ignoredEnd.meeting.id, "other");
+    assert.equal(ignoredEnd.meeting.topic, "Org meeting");
+    assert.equal(ignoredEnd.state.active_meeting_id, "active");
+
+    const state = JSON.parse(relayEnv.STATE_KV.values.get("current-state"));
+    assert.equal(state.active_meeting_id, "active");
+    assert.equal(state.last_event, "meeting.started");
+  });
+
+  it("records but filters org-wide Zoom webhooks whose topics do not match", async () => {
+    const relayEnv = env({ ZOOM_WEBHOOK_TOPIC_FILTER: "Board Room,Focus Room" });
+    const response = await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/webhook", {
+        event: "meeting.started",
+        payload: { object: { id: "other", topic: "Unrelated org meeting" } },
+      }),
+      relayEnv,
+    );
+    const responseBody = await json(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(responseBody.filtered, true);
+
+    const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
+    assert.deepEqual(state.command, { mode: "off" });
+    assert.equal(state.last_event, "relay.started");
+
+    const historyKey = [...relayEnv.STATE_KV.values.keys()].find((key) => key.startsWith("zoom-webhook:"));
+    const record = JSON.parse(relayEnv.STATE_KV.values.get(historyKey));
+    assert.equal(record.event, "meeting.started");
+    assert.equal(record.outcome, "filtered");
+    assert.equal(record.meeting.topic, "Unrelated org meeting");
+    assert.equal(record.metadata.topic_filter_configured, true);
+    assert.equal(record.metadata.topic_filter_matched, false);
+    assert.deepEqual(record.metadata.topic_filter, ["Board Room", "Focus Room"]);
+  });
+
+  it("does not filter Zoom webhooks when topic filter config is missing or blank", async () => {
+    for (const overrides of [{}, { ZOOM_WEBHOOK_TOPIC_FILTER: "" }, { ZOOM_WEBHOOK_TOPIC_FILTERS: "" }]) {
+      const relayEnv = env(overrides);
+      const response = await worker.fetch(
+        await signedZoomRequest("https://relay.test/zoom/webhook?device_id=board-room-a", {
+          event: "meeting.started",
+          payload: { object: { id: "123", topic: "Any org meeting" } },
+        }),
+        relayEnv,
+      );
+
+      assert.equal(response.status, 200);
+      const responseBody = await json(response);
+      assert.equal(responseBody.filtered, undefined);
+
+      const state = JSON.parse(relayEnv.STATE_KV.values.get("current-state"));
+      assert.equal(state.last_event, "meeting.started");
+      assert.equal(state.active_meeting_id, "123");
+    }
+  });
+
+  it("uses device-specific Zoom topic filters when the webhook identifies a device", async () => {
+    const relayEnv = env({
+      ZOOM_WEBHOOK_TOPIC_FILTERS: JSON.stringify({
+        "board-room-a": ["Board Room A"],
+        "board-room-b": "Board Room B",
+      }),
+    });
+
+    const filtered = await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/board-room-a/webhook", {
+        event: "meeting.started",
+        payload: { object: { id: "a-other", topic: "Board Room B planning" } },
+      }),
+      relayEnv,
+    );
+    assert.equal(filtered.status, 200);
+    assert.equal((await json(filtered)).filtered, true);
+
+    const accepted = await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/board-room-b/webhook", {
+        event: "meeting.started",
+        payload: { object: { id: "b-meeting", topic: "Board Room B planning" } },
+      }),
+      relayEnv,
+    );
+    assert.equal(accepted.status, 200);
+    assert.equal((await json(accepted)).filtered, undefined);
+
+    const historyRecords = [...relayEnv.STATE_KV.values.entries()]
+      .filter(([key]) => key.startsWith("zoom-webhook:"))
+      .map(([, value]) => JSON.parse(value));
+    const filteredRecord = historyRecords.find((record) => record.outcome === "filtered");
+    const acceptedRecord = historyRecords.find((record) => record.outcome === "accepted");
+
+    assert.equal(filteredRecord.metadata.device_id, "board-room-a");
+    assert.deepEqual(filteredRecord.metadata.topic_filter, ["Board Room A"]);
+    assert.equal(acceptedRecord.metadata.device_id, "board-room-b");
+    assert.deepEqual(acceptedRecord.metadata.topic_filter, ["Board Room B"]);
+    assert.equal(acceptedRecord.state.active_meeting_id, "b-meeting");
+  });
+
   it("stores meeting.ended as off", async () => {
     const relayEnv = env();
     await worker.fetch(
