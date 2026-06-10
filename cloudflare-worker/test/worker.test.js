@@ -6,6 +6,7 @@ import worker, { testInternals } from "../src/worker.js";
 class MemoryKv {
   constructor() {
     this.values = new Map();
+    this.options = new Map();
   }
 
   async get(key, type) {
@@ -19,8 +20,9 @@ class MemoryKv {
     return value;
   }
 
-  async put(key, value) {
+  async put(key, value, options = {}) {
     this.values.set(key, value);
+    this.options.set(key, options);
   }
 }
 
@@ -120,14 +122,16 @@ describe("Cloudflare Worker relay", () => {
   });
 
   it("rejects unsigned Zoom events", async () => {
+    const relayEnv = env();
     const response = await worker.fetch(
       new Request("https://relay.test/zoom/webhook", {
         method: "POST",
         body: JSON.stringify({ event: "meeting.started", payload: {} }),
       }),
-      env(),
+      relayEnv,
     );
     assert.equal(response.status, 401);
+    assert.equal([...relayEnv.STATE_KV.values.keys()].some((key) => key.startsWith("zoom-webhook:")), false);
   });
 
   it("stores meeting.started as in_progress", async () => {
@@ -144,6 +148,33 @@ describe("Cloudflare Worker relay", () => {
     const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
     assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
     assert.equal(state.last_event, "meeting.started");
+  });
+
+  it("keeps a seven-day KV history record for signed Zoom webhooks", async () => {
+    const relayEnv = env();
+    const response = await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/webhook", {
+        event: "meeting.started",
+        event_ts: 1781121912579,
+        payload: { object: { id: "123", uuid: "uuid-123", topic: "Demo" } },
+      }),
+      relayEnv,
+    );
+    assert.equal(response.status, 200);
+
+    const historyKeys = [...relayEnv.STATE_KV.values.keys()].filter((key) => key.startsWith("zoom-webhook:"));
+    assert.equal(historyKeys.length, 1);
+    assert.match(historyKeys[0], /^zoom-webhook:/);
+    assert.deepEqual(relayEnv.STATE_KV.options.get(historyKeys[0]), { expirationTtl: 604800 });
+
+    const record = JSON.parse(relayEnv.STATE_KV.values.get(historyKeys[0]));
+    assert.equal(record.event, "meeting.started");
+    assert.equal(record.outcome, "accepted");
+    assert.equal(record.zoom_event_ts, 1781121912579);
+    assert.equal(record.zoom_event_at, "2026-06-10T20:05:12.579Z");
+    assert.equal(record.payload.payload.object.topic, "Demo");
+    assert.equal(record.state.source, "zoom");
+    assert.equal(record.state.active_meeting_id, "123");
   });
 
   it("stores meeting.ended as off", async () => {

@@ -1,4 +1,6 @@
 const STATE_KEY = "current-state";
+const ZOOM_WEBHOOK_HISTORY_PREFIX = "zoom-webhook:";
+const ZOOM_WEBHOOK_HISTORY_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_POLL_SECONDS = 5;
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 const DEFAULT_ACTIVE_MEETING_LOOKAHEAD_MINUTES = 5;
@@ -16,9 +18,9 @@ const JSON_HEADERS = {
 let microsoftTokenCache = null;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
-      return await handleRequest(request, env);
+      return await handleRequest(request, env, ctx);
     } catch (error) {
       logRelayEvent("worker_error", { error: errorMessage(error) });
       return jsonResponse({ error: "internal_error" }, 500);
@@ -30,7 +32,7 @@ export default {
   },
 };
 
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const path = stripTrailingSlash(url.pathname);
 
@@ -66,7 +68,7 @@ export async function handleRequest(request, env) {
   }
 
   if (request.method === "POST" && path === "/zoom/webhook") {
-    return handleZoomWebhook(request, env);
+    return handleZoomWebhook(request, env, ctx);
   }
 
   if ((request.method === "GET" || request.method === "POST") && path.startsWith("/simulate/")) {
@@ -76,7 +78,7 @@ export async function handleRequest(request, env) {
   return jsonResponse({ error: "not_found" }, 404);
 }
 
-async function handleZoomWebhook(request, env) {
+async function handleZoomWebhook(request, env, ctx) {
   const rawBody = await request.text();
   let body;
 
@@ -118,6 +120,13 @@ async function handleZoomWebhook(request, env) {
       zoom_event: event || "missing",
       current: logStateFields(current),
     });
+    await recordZoomWebhookHistory(env, ctx, {
+      body,
+      event,
+      outcome: "ignored",
+      currentState: current,
+      responseState: current,
+    });
     return jsonResponse({ ok: true, ignored: true, state: deviceStateResponse(current, env) });
   }
 
@@ -129,12 +138,28 @@ async function handleZoomWebhook(request, env) {
       current: logStateFields(current),
       next: logStateFields(state),
     });
+    await recordZoomWebhookHistory(env, ctx, {
+      body,
+      event,
+      outcome: "stale",
+      currentState: current,
+      nextState: state,
+      responseState: current,
+    });
     return jsonResponse({ ok: true, stale: true, state: deviceStateResponse(current, env) });
   }
 
   const next = await applyPostZoomEventScheduleCheck(event, state, env);
 
   await writeState(env, next);
+  await recordZoomWebhookHistory(env, ctx, {
+    body,
+    event,
+    outcome: "accepted",
+    currentState: current,
+    nextState: next,
+    responseState: next,
+  });
   logStateTransition("zoom_webhook", current, next, { zoom_event: event || "missing" });
   return jsonResponse({ ok: true, state: deviceStateResponse(next, env) });
 }
@@ -360,6 +385,62 @@ async function readState(env) {
 async function writeState(env, state) {
   assertKv(env);
   await env.STATE_KV.put(STATE_KEY, JSON.stringify(state));
+}
+
+async function recordZoomWebhookHistory(env, ctx, {
+  body,
+  event,
+  outcome,
+  currentState = {},
+  nextState = null,
+  responseState = {},
+}) {
+  assertKv(env);
+  const receivedAt = utcNow();
+  const zoomEventTs = zoomEventTimestamp(body.event_ts);
+  const record = {
+    v: 1,
+    received_at: receivedAt,
+    event: event || "missing",
+    outcome,
+    zoom_event_ts: zoomEventTs,
+    zoom_event_at: new Date(zoomEventTs).toISOString(),
+    payload: body,
+    current: logStateFields(currentState),
+    next: nextState ? logStateFields(nextState) : null,
+    state: logStateFields(responseState),
+  };
+  const write = env.STATE_KV.put(zoomWebhookHistoryKey(receivedAt, event), JSON.stringify(record), {
+    expirationTtl: ZOOM_WEBHOOK_HISTORY_TTL_SECONDS,
+  });
+
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(write.catch((error) => {
+      logRelayEvent("zoom_webhook_history_error", {
+        zoom_event: event || "missing",
+        error: errorMessage(error),
+      });
+    }));
+    return;
+  }
+
+  try {
+    await write;
+  } catch (error) {
+    logRelayEvent("zoom_webhook_history_error", {
+      zoom_event: event || "missing",
+      error: errorMessage(error),
+    });
+  }
+}
+
+function zoomWebhookHistoryKey(receivedAt, event) {
+  const timestamp = receivedAt.replace(/[:.]/g, "-");
+  const eventName = String(event || "missing").replace(/[^a-zA-Z0-9._-]/g, "_");
+  const id = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${ZOOM_WEBHOOK_HISTORY_PREFIX}${timestamp}:${eventName}:${id}`;
 }
 
 export async function runSchedulePoll(env, options = {}) {
