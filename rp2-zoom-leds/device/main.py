@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import machine
@@ -52,11 +53,36 @@ except Exception:
     resource_monitor_from_config = None
 
 
+WATCHDOG_RESET_MARKER = "network_watchdog_reset.flag"
+
+
 def _sleep_ms(delay_ms):
     if hasattr(time, "sleep_ms"):
         time.sleep_ms(delay_ms)
     else:
         time.sleep(delay_ms / 1000)
+
+
+def mark_watchdog_reset_pending():
+    try:
+        with open(WATCHDOG_RESET_MARKER, "w") as handle:
+            handle.write("1\n")
+    except Exception:
+        pass
+
+
+def consume_watchdog_reset_pending():
+    try:
+        with open(WATCHDOG_RESET_MARKER, "r"):
+            pass
+    except Exception:
+        return False
+
+    try:
+        os.remove(WATCHDOG_RESET_MARKER)
+    except Exception:
+        pass
+    return True
 
 
 class UsbCommandReader:
@@ -104,6 +130,7 @@ def main():
         if resource_monitor_from_config
         else NullResourceMonitor()
     )
+    watchdog_reset_boot = consume_watchdog_reset_pending()
     telemetry.log(
         "boot",
         device_id=str(getattr(config, "DEVICE_ID", "")),
@@ -118,12 +145,23 @@ def main():
         network_diagnostic_seconds=int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 0)),
         ota_request_timeout_seconds=int(getattr(config, "OTA_REQUEST_TIMEOUT_SECONDS", 0)),
         ota_defer_when_state_due=bool(getattr(config, "OTA_DEFER_WHEN_STATE_DUE", True)),
+        network_thread_watchdog_enabled=bool(
+            getattr(config, "NETWORK_THREAD_WATCHDOG_ENABLED", True)
+        ),
+        network_thread_watchdog_seconds=int(
+            getattr(config, "NETWORK_THREAD_WATCHDOG_SECONDS", 0)
+        ),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
         resource_monitor_enabled=bool(getattr(config, "RESOURCE_MONITOR_ENABLED", False)),
         resource_monitor_sample_seconds=int(getattr(config, "RESOURCE_MONITOR_SAMPLE_SECONDS", 0)),
+        watchdog_reset_boot=watchdog_reset_boot,
     )
     network_reader = NetworkCommandReader(telemetry)
-    startup_command = run_startup_sequence(strip, status, telemetry, network_reader)
+    startup_command = None
+    if watchdog_reset_boot:
+        telemetry.log("startup_sequence_skip", reason="network_thread_watchdog_reset")
+    else:
+        startup_command = run_startup_sequence(strip, status, telemetry, network_reader)
     if startup_command is not None:
         apply_command(strip, status, startup_command, telemetry, "startup_state")
     run_startup_self_test(strip, status, telemetry)
@@ -301,16 +339,28 @@ class ThreadedNetworkCommandReader:
         self.lock = _thread.allocate_lock()
         self.pending_command = None
         self.idle_ms = int(getattr(config, "NETWORK_THREAD_IDLE_MS", 20))
+        self.watchdog_enabled = bool(getattr(config, "NETWORK_THREAD_WATCHDOG_ENABLED", True))
+        self.watchdog_ms = int(getattr(config, "NETWORK_THREAD_WATCHDOG_SECONDS", 30)) * 1000
+        if self.watchdog_ms <= 0:
+            self.watchdog_enabled = False
+        self.last_heartbeat_ms = time.ticks_ms()
+        self.resetting = False
         self.last_status_ms = 0
         _thread.start_new_thread(self._run, ())
         print("Network polling running on background thread.")
-        self.telemetry.log("network_thread_start", idle_ms=self.idle_ms)
+        self.telemetry.log(
+            "network_thread_start",
+            idle_ms=self.idle_ms,
+            watchdog_enabled=self.watchdog_enabled,
+            watchdog_seconds=int(self.watchdog_ms / 1000),
+        )
 
     def pause_for_serial_override(self):
         self.reader.pause_for_serial_override()
         self._set_pending_command(None)
 
     def poll(self):
+        self._reset_if_stale(time.ticks_ms())
         self.lock.acquire()
         try:
             command = getattr(self, "pending_command", None)
@@ -325,6 +375,35 @@ class ThreadedNetworkCommandReader:
             self.pending_command = command
         finally:
             self.lock.release()
+
+    def _mark_heartbeat(self, now):
+        self.last_heartbeat_ms = now
+
+    def _thread_stale_ms(self, now):
+        if not self.watchdog_enabled:
+            return 0
+
+        stale_ms = time.ticks_diff(now, self.last_heartbeat_ms)
+        if stale_ms < self.watchdog_ms:
+            return 0
+        return stale_ms
+
+    def _reset_if_stale(self, now):
+        stale_ms = self._thread_stale_ms(now)
+        if stale_ms <= 0 or self.resetting:
+            return
+
+        self.resetting = True
+        self.telemetry.log(
+            "network_thread_watchdog_reset",
+            stale_ms=stale_ms,
+            watchdog_seconds=int(self.watchdog_ms / 1000),
+            reader_enabled=getattr(self.reader, "enabled", False),
+            reader_failures=getattr(self.reader, "failures", 0),
+        )
+        mark_watchdog_reset_pending()
+        _sleep_ms(250)
+        machine.reset()
 
     def _log_thread_status(self, now):
         interval_seconds = int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 30))
@@ -345,13 +424,17 @@ class ThreadedNetworkCommandReader:
     def _run(self):
         while True:
             try:
-                self._log_thread_status(time.ticks_ms())
+                now = time.ticks_ms()
+                self._mark_heartbeat(now)
+                self._log_thread_status(now)
                 command = self.reader.poll()
+                self._mark_heartbeat(time.ticks_ms())
                 if command is not None and not self.reader.serial_override_active():
                     self._set_pending_command(command)
             except Exception as exc:
                 print("Network thread failed:", exc)
                 self.telemetry.log("network_thread_error", error=str(exc))
+                self._mark_heartbeat(time.ticks_ms())
                 _sleep_ms(int(getattr(config, "STATE_ERROR_RETRY_SECONDS", 10) * 1000))
                 continue
 
