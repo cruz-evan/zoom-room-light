@@ -84,6 +84,7 @@ URL, for example `/zoom/board-room-a/webhook` or
 `/zoom/webhook?device_id=board-room-a`.
 
 ```text
+ZOOM_WEBHOOK_TOPIC_FILTER=Cronometer Board Room's Personal Meeting Room
 ZOOM_WEBHOOK_TOPIC_FILTERS={"board-room-a":["Board Room A"],"board-room-b":["Board Room B"]}
 ```
 
