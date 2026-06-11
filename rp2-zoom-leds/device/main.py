@@ -116,6 +116,8 @@ def main():
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
         ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         network_diagnostic_seconds=int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 0)),
+        ota_request_timeout_seconds=int(getattr(config, "OTA_REQUEST_TIMEOUT_SECONDS", 0)),
+        ota_defer_when_state_due=bool(getattr(config, "OTA_DEFER_WHEN_STATE_DUE", True)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
         resource_monitor_enabled=bool(getattr(config, "RESOURCE_MONITOR_ENABLED", False)),
         resource_monitor_sample_seconds=int(getattr(config, "RESOURCE_MONITOR_SAMPLE_SECONDS", 0)),
@@ -477,6 +479,7 @@ class NetworkCommandReader:
                     state=state_info,
                     command=normalized,
                 )
+                self._handle_ota_force_request(state, state_info)
                 return True, normalized
 
             if self.ota_enabled or self.ota_config_enabled:
@@ -520,13 +523,21 @@ class NetworkCommandReader:
         if not ota_due and not state_due:
             return None
 
+        if state_due:
+            command = self._poll_state(now)
+            if ota_due and bool(getattr(config, "OTA_DEFER_WHEN_STATE_DUE", True)):
+                self.telemetry.log(
+                    "ota_deferred_for_state",
+                    next_state_due_ms=time.ticks_diff(self.next_poll_ms, time.ticks_ms()),
+                )
+                return command
+            if command is not None:
+                return command
+
         if ota_due:
-            self._poll_ota(now)
+            self._poll_ota(time.ticks_ms())
 
-        if not state_due:
-            return None
-
-        return self._poll_state(now)
+        return None
 
     def _ensure_wifi(self):
         if self.wlan is None or not self.wlan.isconnected():
@@ -576,11 +587,23 @@ class NetworkCommandReader:
 
     def _check_ota(self):
         statuses = []
+        timeout_seconds = int(getattr(config, "OTA_REQUEST_TIMEOUT_SECONDS", 8))
         if self.ota_enabled:
+            started = time.ticks_ms()
+            self.telemetry.log(
+                "ota_app_check_start",
+                timeout_seconds=timeout_seconds,
+            )
             status = check_for_update(
                 config.OTA_MANIFEST_URL,
                 getattr(config, "OTA_TOKEN", ""),
                 getattr(config, "OTA_MAX_FILE_BYTES", 65536),
+                timeout_seconds,
+            )
+            self.telemetry.log(
+                "ota_app_check_done",
+                status=status,
+                elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
             )
             statuses.append("app:%s" % status)
             if status == "applied":
@@ -590,10 +613,22 @@ class NetworkCommandReader:
             config_url = str(getattr(config, "OTA_CONFIG_URL", "") or "")
             if not config_url and config_url_from_manifest_url is not None:
                 config_url = config_url_from_manifest_url(getattr(config, "OTA_MANIFEST_URL", ""))
+            started = time.ticks_ms()
+            self.telemetry.log(
+                "ota_config_check_start",
+                config_url_set=bool(config_url),
+                timeout_seconds=timeout_seconds,
+            )
             status = check_for_config_update(
                 config_url,
                 getattr(config, "OTA_CONFIG_KEY", ""),
                 getattr(config, "OTA_TOKEN", ""),
+                timeout_seconds,
+            )
+            self.telemetry.log(
+                "ota_config_check_done",
+                status=status,
+                elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
             )
             statuses.append("config:%s" % status)
             if status == "applied":
@@ -603,6 +638,20 @@ class NetworkCommandReader:
                 return "config:applied"
 
         return ",".join(statuses) if statuses else "disabled"
+
+    def _handle_ota_force_request(self, state, state_info=None):
+        ota_check_requested_at = str(state.get("ota_check_requested_at") or "")
+        if not ota_check_requested_at or ota_check_requested_at == self.last_ota_check_request:
+            return False
+
+        self.last_ota_check_request = ota_check_requested_at
+        self.telemetry.log(
+            "ota_force_requested",
+            requested_at=ota_check_requested_at,
+            state=state_info or state_summary(state),
+        )
+        self._poll_ota(time.ticks_ms())
+        return True
 
     def _poll_state(self, now):
         started = time.ticks_ms()
@@ -626,15 +675,7 @@ class NetworkCommandReader:
                 int(poll_seconds * 1000),
             )
 
-            ota_check_requested_at = str(state.get("ota_check_requested_at") or "")
-            if ota_check_requested_at and ota_check_requested_at != self.last_ota_check_request:
-                self.last_ota_check_request = ota_check_requested_at
-                self.telemetry.log(
-                    "ota_force_requested",
-                    requested_at=ota_check_requested_at,
-                    state=state_info,
-                )
-                self._poll_ota(time.ticks_ms())
+            self._handle_ota_force_request(state, state_info)
 
             if normalized == self.last_command:
                 reapply_seconds = int(getattr(config, "STATE_REAPPLY_SECONDS", 60))

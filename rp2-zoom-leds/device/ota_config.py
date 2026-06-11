@@ -9,6 +9,11 @@ except ImportError:
     import requests
 
 try:
+    import usocket as socket
+except ImportError:
+    import socket
+
+try:
     import uos as os
 except ImportError:
     import os
@@ -36,11 +41,11 @@ def config_url_from_manifest_url(manifest_url):
     return value + "/wifi-config.json"
 
 
-def check_for_config_update(url, key, token=""):
+def check_for_config_update(url, key, token="", timeout_seconds=8):
     if not url or not key:
         return "disabled"
 
-    envelope = _fetch_json(url, token)
+    envelope = _fetch_json(url, token, timeout_seconds)
     if not envelope:
         return "missing"
 
@@ -58,10 +63,10 @@ def check_for_config_update(url, key, token=""):
     return "applied"
 
 
-def _fetch_json(url, token):
+def _fetch_json(url, token, timeout_seconds=8):
     response = None
     try:
-        response = requests.get(url, headers=_headers(token))
+        response = _request_get(url, token, timeout_seconds)
         status = getattr(response, "status_code", 0)
         if status == 404:
             return {}
@@ -77,6 +82,28 @@ def _headers(token):
     if token:
         return {"Authorization": "Bearer %s" % token}
     return {}
+
+
+def _request_get(url, token, timeout_seconds=8):
+    headers = _headers(token)
+    try:
+        return requests.get(url, headers=headers, timeout=timeout_seconds)
+    except TypeError:
+        return _request_get_with_socket_timeout(url, headers, timeout_seconds)
+
+
+def _request_get_with_socket_timeout(url, headers, timeout_seconds):
+    previous = None
+    can_restore = hasattr(socket, "getdefaulttimeout")
+    if can_restore:
+        previous = socket.getdefaulttimeout()
+    if hasattr(socket, "setdefaulttimeout"):
+        socket.setdefaulttimeout(timeout_seconds)
+    try:
+        return requests.get(url, headers=headers)
+    finally:
+        if can_restore and hasattr(socket, "setdefaulttimeout"):
+            socket.setdefaulttimeout(previous)
 
 
 def _profiles_from_payload(payload):

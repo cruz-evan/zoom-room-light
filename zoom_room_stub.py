@@ -487,6 +487,11 @@ def default_server_url() -> str:
         value = os.getenv(key)
         if value:
             return value
+    env_values = local_env_values()
+    for key in ("ZOOM_ROOM_STUB_URL", "ZOOM_ROOM_RELAY_URL", "RELAY"):
+        value = env_values.get(key)
+        if value:
+            return value
     return DEFAULT_SERVER_URL
 
 

@@ -18,6 +18,11 @@ try:
 except ImportError:
     import requests
 
+try:
+    import usocket as socket
+except ImportError:
+    import socket
+
 import gc
 import machine
 import time
@@ -31,8 +36,8 @@ class OtaError(RuntimeError):
     pass
 
 
-def check_for_update(manifest_url, token="", max_file_bytes=65536):
-    manifest = _fetch_json(manifest_url, token)
+def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_seconds=8):
+    manifest = _fetch_json(manifest_url, token, timeout_seconds)
     version = str(manifest.get("version") or "")
     files = _manifest_files(manifest)
 
@@ -49,7 +54,7 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536):
         return "current"
 
     print("OTA update available:", version)
-    _download_pending(pending, token, max_file_bytes)
+    _download_pending(pending, token, max_file_bytes, timeout_seconds)
     _commit_downloads(pending)
     _write_state(version, files)
     print("OTA update applied; resetting")
@@ -58,10 +63,10 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536):
     return "applied"
 
 
-def _fetch_json(url, token):
+def _fetch_json(url, token, timeout_seconds=8):
     response = None
     try:
-        response = requests.get(url, headers=_headers(token))
+        response = _request_get(url, token, timeout_seconds)
         status = getattr(response, "status_code", 0)
         if status != 200:
             raise OtaError("manifest request failed: HTTP %s" % status)
@@ -71,10 +76,10 @@ def _fetch_json(url, token):
             response.close()
 
 
-def _fetch_bytes(url, token):
+def _fetch_bytes(url, token, timeout_seconds=8):
     response = None
     try:
-        response = requests.get(url, headers=_headers(token))
+        response = _request_get(url, token, timeout_seconds)
         status = getattr(response, "status_code", 0)
         if status != 200:
             raise OtaError("file request failed: HTTP %s" % status)
@@ -88,6 +93,28 @@ def _headers(token):
     if token:
         return {"Authorization": "Bearer %s" % token}
     return {}
+
+
+def _request_get(url, token, timeout_seconds=8):
+    headers = _headers(token)
+    try:
+        return requests.get(url, headers=headers, timeout=timeout_seconds)
+    except TypeError:
+        return _request_get_with_socket_timeout(url, headers, timeout_seconds)
+
+
+def _request_get_with_socket_timeout(url, headers, timeout_seconds):
+    previous = None
+    can_restore = hasattr(socket, "getdefaulttimeout")
+    if can_restore:
+        previous = socket.getdefaulttimeout()
+    if hasattr(socket, "setdefaulttimeout"):
+        socket.setdefaulttimeout(timeout_seconds)
+    try:
+        return requests.get(url, headers=headers)
+    finally:
+        if can_restore and hasattr(socket, "setdefaulttimeout"):
+            socket.setdefaulttimeout(previous)
 
 
 def _manifest_files(manifest):
@@ -143,12 +170,12 @@ def _installed_matches(file_info):
         return False
 
 
-def _download_pending(files, token, max_file_bytes):
+def _download_pending(files, token, max_file_bytes, timeout_seconds=8):
     for file_info in files:
         if file_info["size"] > max_file_bytes:
             raise OtaError("manifest file is too large")
 
-        content = _fetch_bytes(file_info["url"], token)
+        content = _fetch_bytes(file_info["url"], token, timeout_seconds)
         try:
             if len(content) != file_info["size"]:
                 raise OtaError("downloaded file size mismatch")
