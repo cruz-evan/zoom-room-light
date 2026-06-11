@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import socket
 import subprocess
 import time
@@ -100,6 +101,25 @@ def parse_args() -> argparse.Namespace:
     scenario.add_argument("--ends-in", type=float, default=3.0)
     scenario.add_argument("--duration", type=int, default=10, help=argparse.SUPPRESS)
     scenario.set_defaults(func=cmd_scenario)
+
+    ota = subparsers.add_parser(
+        "ota",
+        help="trigger OTA backend workflows",
+    )
+    ota_subparsers = ota.add_subparsers(dest="ota_command", required=True)
+    ota_config = ota_subparsers.add_parser(
+        "config",
+        help="publish a fresh encrypted OTA config for Pico polling",
+    )
+    ota_config.add_argument("--workflow", default="pico-ota.yml")
+    ota_config.add_argument("--ref", default=os.getenv("PICO_OTA_REF", "main"))
+    ota_config.add_argument("--repo", default=os.getenv("GITHUB_REPOSITORY", ""))
+    ota_config.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the gh command without running it",
+    )
+    ota_config.set_defaults(func=cmd_ota_config)
 
     return parser.parse_args()
 
@@ -244,6 +264,37 @@ def cmd_scenario(args: argparse.Namespace) -> int:
         if index != len(steps) and args.step_seconds > 0:
             time.sleep(args.step_seconds)
     return 0
+
+
+def cmd_ota_config(args: argparse.Namespace) -> int:
+    command = build_ota_config_command(args)
+    printable = shlex.join(command)
+
+    if args.dry_run:
+        print(printable)
+        return 0
+
+    print("Triggering OTA config publish workflow.")
+    print(printable)
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as exc:
+        raise SystemExit("gh CLI is required for ota config. Install/authenticate GitHub CLI.") from exc
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit("OTA config workflow trigger failed with exit code %s" % exc.returncode) from exc
+
+    print(
+        "Workflow dispatched. The Pico will see the OTA config diff on its next OTA poll "
+        "after GitHub Pages deploys wifi-config.json."
+    )
+    return 0
+
+
+def build_ota_config_command(args: argparse.Namespace) -> list[str]:
+    command = ["gh", "workflow", "run", args.workflow, "--ref", args.ref]
+    if args.repo:
+        command.extend(["--repo", args.repo])
+    return command
 
 
 def start_starting_soon_status(

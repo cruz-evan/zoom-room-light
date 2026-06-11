@@ -130,3 +130,81 @@ def test_schedule_list_reads_device_state(monkeypatch, capsys):
 def test_format_minutes_keeps_cli_urls_tidy():
     assert zoom_room_stub.format_minutes(3.0) == "3"
     assert zoom_room_stub.format_minutes(2.5) == "2.5"
+
+
+def test_ota_config_command_builds_gh_workflow_run():
+    command = zoom_room_stub.build_ota_config_command(
+        argparse.Namespace(workflow="pico-ota.yml", ref="main", repo="cruz-evan/zoom-room-light")
+    )
+
+    assert command == [
+        "gh",
+        "workflow",
+        "run",
+        "pico-ota.yml",
+        "--ref",
+        "main",
+        "--repo",
+        "cruz-evan/zoom-room-light",
+    ]
+
+
+def test_ota_config_command_omits_repo_when_unset():
+    command = zoom_room_stub.build_ota_config_command(
+        argparse.Namespace(workflow="pico-ota.yml", ref="main", repo="")
+    )
+
+    assert command == ["gh", "workflow", "run", "pico-ota.yml", "--ref", "main"]
+
+
+def test_ota_config_dry_run_prints_command(capsys):
+    result = zoom_room_stub.cmd_ota_config(
+        argparse.Namespace(
+            workflow="pico-ota.yml",
+            ref="main",
+            repo="cruz-evan/zoom-room-light",
+            dry_run=True,
+        )
+    )
+
+    assert result == 0
+    assert (
+        "gh workflow run pico-ota.yml --ref main --repo cruz-evan/zoom-room-light"
+        in capsys.readouterr().out
+    )
+
+
+def test_ota_config_runs_gh_workflow(monkeypatch, capsys):
+    calls = []
+
+    def fake_run(command, check):
+        calls.append((command, check))
+
+    monkeypatch.setattr(zoom_room_stub.subprocess, "run", fake_run)
+
+    result = zoom_room_stub.cmd_ota_config(
+        argparse.Namespace(
+            workflow="pico-ota.yml",
+            ref="main",
+            repo="cruz-evan/zoom-room-light",
+            dry_run=False,
+        )
+    )
+
+    assert result == 0
+    assert calls == [
+        (
+            [
+                "gh",
+                "workflow",
+                "run",
+                "pico-ota.yml",
+                "--ref",
+                "main",
+                "--repo",
+                "cruz-evan/zoom-room-light",
+            ],
+            True,
+        )
+    ]
+    assert "Workflow dispatched" in capsys.readouterr().out

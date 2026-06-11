@@ -115,6 +115,7 @@ def main():
         network_enabled=bool(getattr(config, "NETWORK_ENABLED", False)),
         state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
         ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
+        network_diagnostic_seconds=int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 0)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
         resource_monitor_enabled=bool(getattr(config, "RESOURCE_MONITOR_ENABLED", False)),
         resource_monitor_sample_seconds=int(getattr(config, "RESOURCE_MONITOR_SAMPLE_SECONDS", 0)),
@@ -297,6 +298,7 @@ class ThreadedNetworkCommandReader:
         self.lock = _thread.allocate_lock()
         self.pending_command = None
         self.idle_ms = int(getattr(config, "NETWORK_THREAD_IDLE_MS", 20))
+        self.last_status_ms = 0
         _thread.start_new_thread(self._run, ())
         print("Network polling running on background thread.")
         self.telemetry.log("network_thread_start", idle_ms=self.idle_ms)
@@ -308,7 +310,7 @@ class ThreadedNetworkCommandReader:
     def poll(self):
         self.lock.acquire()
         try:
-            command = self.pending_command
+            command = getattr(self, "pending_command", None)
             self.pending_command = None
             return command
         finally:
@@ -321,9 +323,26 @@ class ThreadedNetworkCommandReader:
         finally:
             self.lock.release()
 
+    def _log_thread_status(self, now):
+        interval_seconds = int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 30))
+        if interval_seconds <= 0:
+            return
+        if self.last_status_ms and time.ticks_diff(now, self.last_status_ms) < interval_seconds * 1000:
+            return
+
+        self.last_status_ms = now
+        self.telemetry.log(
+            "network_thread_status",
+            idle_ms=self.idle_ms,
+            pending_command=getattr(self, "pending_command", None) is not None,
+            reader_enabled=getattr(self.reader, "enabled", False),
+            reader_failures=getattr(self.reader, "failures", 0),
+        )
+
     def _run(self):
         while True:
             try:
+                self._log_thread_status(time.ticks_ms())
                 command = self.reader.poll()
                 if command is not None and not self.reader.serial_override_active():
                     self._set_pending_command(command)
@@ -353,6 +372,7 @@ class NetworkCommandReader:
         self.wlan = None
         self.last_command = None
         self.last_command_emitted_ms = 0
+        self.last_diagnostic_ms = 0
 
         if self.enabled and (connect_wifi_profiles is None or profiles_from_config is None):
             print("Wi-Fi module unavailable; staying in serial mode.")
@@ -389,6 +409,35 @@ class NetworkCommandReader:
 
     def serial_override_active(self):
         return time.ticks_diff(self.serial_pause_until_ms, time.ticks_ms()) > 0
+
+    def _log_poll_diagnostic(self, now, state_due=False, ota_due=False, serial_override=False):
+        interval_seconds = int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 30))
+        if interval_seconds <= 0:
+            return
+        if self.last_diagnostic_ms and time.ticks_diff(now, self.last_diagnostic_ms) < interval_seconds * 1000:
+            return
+
+        self.last_diagnostic_ms = now
+        wlan_connected = False
+        try:
+            wlan_connected = bool(self.wlan and self.wlan.isconnected())
+        except Exception:
+            wlan_connected = False
+
+        self.telemetry.log(
+            "network_poll_status",
+            enabled=self.enabled,
+            state_enabled=self.state_enabled,
+            ota_enabled=self.ota_enabled,
+            ota_config_enabled=self.ota_config_enabled,
+            serial_override=serial_override,
+            state_due=state_due,
+            ota_due=ota_due,
+            state_due_ms=time.ticks_diff(self.next_poll_ms, now),
+            ota_due_ms=time.ticks_diff(self.next_ota_check_ms, now),
+            failures=self.failures,
+            wlan_connected=wlan_connected,
+        )
 
     def confirm_startup_connectivity(self):
         if not self.enabled:
@@ -457,6 +506,7 @@ class NetworkCommandReader:
 
         now = time.ticks_ms()
         if self.serial_override_active():
+            self._log_poll_diagnostic(now, serial_override=True)
             return None
 
         ota_due = (
@@ -464,6 +514,7 @@ class NetworkCommandReader:
             and time.ticks_diff(now, self.next_ota_check_ms) >= 0
         )
         state_due = self.state_enabled and time.ticks_diff(now, self.next_poll_ms) >= 0
+        self._log_poll_diagnostic(now, state_due=state_due, ota_due=ota_due)
         if not ota_due and not state_due:
             return None
 

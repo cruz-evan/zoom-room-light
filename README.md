@@ -151,6 +151,13 @@ python3 zoom_room_stub.py status free
 python3 zoom_room_stub.py scenario --step-seconds 8
 ```
 
+Force a fresh encrypted OTA Wi-Fi/config publish for devices to detect on their
+next OTA poll:
+
+```bash
+python3 zoom_room_stub.py ota config --repo cruz-evan/zoom-room-light --ref main
+```
+
 To drive the deployed Worker instead, set `ZOOM_ROOM_RELAY_URL` or pass
 `--server`. Simulation commands require `ADMIN_TOKEN`,
 `ZOOM_ROOM_ADMIN_TOKEN`, or `--admin-token`.
