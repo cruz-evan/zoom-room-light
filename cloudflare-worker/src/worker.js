@@ -6,6 +6,7 @@ const SIGNATURE_TOLERANCE_SECONDS = 300;
 const DEFAULT_ACTIVE_MEETING_LOOKAHEAD_MINUTES = 5;
 const DEFAULT_EMPTY_ROOM_LOOKAHEAD_MINUTES = 15;
 const DEFAULT_ENDING_SOON_MINUTES = 5;
+const DEFAULT_SCHEDULE_END_CLEAR_GRACE_MINUTES = 5;
 const DEFAULT_CALENDAR_LOOKBACK_MINUTES = 720;
 const DEFAULT_CALENDAR_LOOKAHEAD_MINUTES = 240;
 const MICROSOFT_GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -197,7 +198,7 @@ async function applyPostZoomEventScheduleCheck(event, state, env) {
     const nowMs = Date.now();
     const meetings = await listScheduleMeetings(env, nowMs);
     const schedule = scheduleStatusFromMeetings(meetings, state, env, nowMs);
-    const next = stateFromScheduleStatus(schedule, state);
+    const next = stateFromScheduleStatus(schedule, state, env, nowMs);
 
     logRelayEvent("zoom_webhook_schedule_check", {
       zoom_event: event,
@@ -305,11 +306,6 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
 
   if (event === "meeting.ended") {
     if (isStartingSoonState(currentState)) {
-      return null;
-    }
-
-    const activeMeeting = activeMeetingFromState(currentState);
-    if ((activeMeeting.id || activeMeeting.uuid) && (meeting.id || meeting.uuid) && !sameMeeting(activeMeeting, meeting)) {
       return null;
     }
 
@@ -562,7 +558,7 @@ export async function runSchedulePoll(env, options = {}) {
     const nowMs = options.nowMs ?? Date.now();
     const meetings = await listScheduleMeetings(env, nowMs);
     const schedule = scheduleStatusFromMeetings(meetings, current, env, nowMs);
-    const next = stateFromScheduleStatus(schedule, current);
+    const next = stateFromScheduleStatus(schedule, current, env, nowMs);
     const wrote = shouldWriteState(current, next);
 
     if (wrote) {
@@ -608,12 +604,14 @@ function scheduleStatusFromMeetings(meetings, currentState, env, nowMs = Date.no
   const sortedMeetings = sortMeetings(meetings);
   const now = new Date(nowMs);
   return {
+    checked_at_ms: nowMs,
+    active: activeScheduledMeeting(sortedMeetings, now),
     upcoming: nextUpcomingMeeting(sortedMeetings, now, upcomingLookaheadMinutes(env, currentState)),
     ending: endingSoonMeeting(sortedMeetings, currentState, now, endingSoonMinutes(env)),
   };
 }
 
-function stateFromScheduleStatus(schedule, currentState) {
+function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = schedule?.checked_at_ms ?? Date.now()) {
   const now = utcNow();
   const activeMeeting = activeMeetingFromState(currentState);
   const zoomEventTs = Number(currentState.zoom_event_ts || 0);
@@ -622,6 +620,19 @@ function stateFromScheduleStatus(schedule, currentState) {
     const currentNextMeeting = nextMeetingFromState(currentState);
     const nextMeeting = schedule.upcoming ? schedule.upcoming.meeting : {};
     const nextMeetingMinutes = schedule.upcoming ? schedule.upcoming.minutes : null;
+    const scheduledActiveMeeting = schedule.ending?.meeting || schedule.active?.meeting || activeMeeting;
+
+    if (shouldClearAfterScheduledEnd(currentState, schedule, env, nowMs)) {
+      return makeStoredState({
+        command: { mode: "off" },
+        lastEvent: "schedule.end_grace_clear",
+        updatedAt: now,
+        meeting: scheduledActiveMeeting,
+        source: "schedule",
+        zoomEventTs,
+        inUse: false,
+      });
+    }
 
     if (schedule.ending) {
       return makeStoredState({
@@ -642,6 +653,21 @@ function stateFromScheduleStatus(schedule, currentState) {
       });
     }
 
+    if (isEndingSoonState(currentState) && parseScheduleTime(currentState.active_meeting_end_at) !== null) {
+      return makeStoredState({
+        command: normalizeCommand(currentState.command),
+        lastEvent: currentState.last_event || "schedule.ending_soon",
+        updatedAt: currentState.updated_at || now,
+        meeting: scheduledActiveMeeting,
+        source: currentState.source || "zoom",
+        zoomEventTs,
+        inUse: true,
+        activeMeeting: scheduledActiveMeeting,
+        nextMeeting,
+        nextMeetingMinutes,
+      });
+    }
+
     if (isEndingSoonState(currentState)) {
       return makeStoredState({
         command: { mode: "meeting_status", state: "in_progress" },
@@ -652,6 +678,21 @@ function stateFromScheduleStatus(schedule, currentState) {
         zoomEventTs,
         inUse: true,
         activeMeeting,
+        nextMeeting,
+        nextMeetingMinutes,
+      });
+    }
+
+    if (schedule.active) {
+      return makeStoredState({
+        command: normalizeCommand(currentState.command),
+        lastEvent: currentState.last_event || "meeting.started",
+        updatedAt: currentState.updated_at || now,
+        meeting: activeMeeting,
+        source: currentState.source || "zoom",
+        zoomEventTs,
+        inUse: true,
+        activeMeeting: schedule.active.meeting,
         nextMeeting,
         nextMeetingMinutes,
       });
@@ -686,6 +727,21 @@ function stateFromScheduleStatus(schedule, currentState) {
     }
 
     return currentState;
+  }
+
+  if (!schedule.upcoming && scheduleOnlyMeetingInProgress(currentState, nowMs)) {
+    return currentState;
+  }
+
+  if (!schedule.upcoming && scheduleOnlyMeetingEnded(currentState, nowMs)) {
+    return makeStoredState({
+      command: { mode: "off" },
+      lastEvent: "schedule.end_clear",
+      updatedAt: now,
+      meeting: nextMeetingFromState(currentState),
+      source: "schedule",
+      inUse: false,
+    });
   }
 
   if (schedule.upcoming) {
@@ -771,8 +827,12 @@ function makeStoredState({
     in_use: typeof inUse === "boolean" ? inUse : inferredInUse(normalizedCommand),
     active_meeting_id: String(active.id || active.uuid || ""),
     active_topic: String(active.topic || ""),
+    active_meeting_start_at: scheduleStartAt(active),
+    active_meeting_end_at: scheduleEndAt(active),
     next_meeting_id: String(next.id || next.uuid || ""),
     next_meeting_topic: String(next.topic || ""),
+    next_meeting_start_at: scheduleStartAt(next),
+    next_meeting_end_at: scheduleEndAt(next),
     next_meeting_minutes:
       next.id || next.uuid ? boundedMinutes(nextMeetingMinutes) : null,
     meeting: {
@@ -814,7 +874,28 @@ function nextUpcomingMeeting(meetings, now, lookaheadMinutes) {
       meeting: normalizedMeeting(meeting),
       minutes: lookaheadMinutes,
       starts_at: start.toISOString(),
+      ends_at: scheduleEndAt(meeting),
     };
+  }
+
+  return null;
+}
+
+function activeScheduledMeeting(meetings, now) {
+  for (const meeting of meetings) {
+    const window = scheduleWindow(meeting);
+    if (!window) {
+      continue;
+    }
+
+    const nowMs = now.getTime();
+    if (window.start.getTime() <= nowMs && nowMs < window.end.getTime()) {
+      return {
+        meeting: normalizedMeeting(meeting),
+        starts_at: window.start.toISOString(),
+        ends_at: window.end.toISOString(),
+      };
+    }
   }
 
   return null;
@@ -852,6 +933,7 @@ function endingSoonMeeting(meetings, currentState, now, lookaheadMinutes) {
     return {
       meeting: normalizedMeeting(meeting),
       minutes: lookaheadMinutes,
+      starts_at: start.toISOString(),
       ends_at: end.toISOString(),
     };
   }
@@ -1009,8 +1091,11 @@ function sortMeetings(meetings) {
 
 function publicScheduleStatus(schedule) {
   return {
+    active: schedule.active
+      ? { starts_at: schedule.active.starts_at, ends_at: schedule.active.ends_at }
+      : null,
     upcoming: schedule.upcoming
-      ? { minutes: schedule.upcoming.minutes, starts_at: schedule.upcoming.starts_at }
+      ? { minutes: schedule.upcoming.minutes, starts_at: schedule.upcoming.starts_at, ends_at: schedule.upcoming.ends_at }
       : null,
     ending: schedule.ending ? { minutes: schedule.ending.minutes, ends_at: schedule.ending.ends_at } : null,
   };
@@ -1046,7 +1131,11 @@ function shouldWriteState(currentState, nextState) {
     JSON.stringify(currentCommand) !== JSON.stringify(nextCommand) ||
     String(currentState.last_event || "") !== String(nextState.last_event || "") ||
     String(currentState.active_meeting_id || "") !== String(nextState.active_meeting_id || "") ||
+    String(currentState.active_meeting_start_at || "") !== String(nextState.active_meeting_start_at || "") ||
+    String(currentState.active_meeting_end_at || "") !== String(nextState.active_meeting_end_at || "") ||
     String(currentState.next_meeting_id || "") !== String(nextState.next_meeting_id || "") ||
+    String(currentState.next_meeting_start_at || "") !== String(nextState.next_meeting_start_at || "") ||
+    String(currentState.next_meeting_end_at || "") !== String(nextState.next_meeting_end_at || "") ||
     String(currentState.next_meeting_minutes ?? "") !== String(nextState.next_meeting_minutes ?? "")
   );
 }
@@ -1083,6 +1172,41 @@ function emptyRoomLookaheadMinutes(env) {
 
 function endingSoonMinutes(env) {
   return positiveMinutes(env.ENDING_SOON_MINUTES, DEFAULT_ENDING_SOON_MINUTES);
+}
+
+function scheduleEndClearGraceMinutes(env) {
+  return positiveMinutes(
+    env.SCHEDULE_END_CLEAR_GRACE_MINUTES,
+    DEFAULT_SCHEDULE_END_CLEAR_GRACE_MINUTES,
+  );
+}
+
+function shouldClearAfterScheduledEnd(currentState, schedule, env, nowMs) {
+  const end = parseScheduleTime(
+    schedule.ending?.ends_at ||
+      schedule.active?.ends_at ||
+      currentState.active_meeting_end_at,
+  );
+  if (end === null) {
+    return false;
+  }
+  return nowMs >= end.getTime() + scheduleEndClearGraceMinutes(env) * 60000;
+}
+
+function scheduleOnlyMeetingInProgress(currentState, nowMs) {
+  if (!isScheduleDrivenState(currentState)) {
+    return false;
+  }
+  const end = parseScheduleTime(currentState.next_meeting_end_at);
+  return end !== null && nowMs < end.getTime();
+}
+
+function scheduleOnlyMeetingEnded(currentState, nowMs) {
+  if (!isScheduleDrivenState(currentState)) {
+    return false;
+  }
+  const end = parseScheduleTime(currentState.next_meeting_end_at);
+  return end !== null && nowMs >= end.getTime();
 }
 
 function positiveMinutes(value, fallback) {
@@ -1126,6 +1250,8 @@ function activeMeetingFromState(state) {
     id: state.active_meeting_id || meeting.id,
     uuid: meeting.uuid,
     topic: state.active_topic || meeting.topic,
+    start_at: state.active_meeting_start_at,
+    end_at: state.active_meeting_end_at,
   });
 }
 
@@ -1133,6 +1259,8 @@ function nextMeetingFromState(state) {
   return normalizedMeeting({
     id: state.next_meeting_id,
     topic: state.next_meeting_topic,
+    start_at: state.next_meeting_start_at,
+    end_at: state.next_meeting_end_at,
   });
 }
 
@@ -1141,7 +1269,47 @@ function normalizedMeeting(meeting) {
     id: String(meeting?.id || ""),
     uuid: String(meeting?.uuid || ""),
     topic: String(meeting?.topic || ""),
+    start_at: scheduleStartAt(meeting),
+    end_at: scheduleEndAt(meeting),
   };
+}
+
+function scheduleWindow(meeting) {
+  const start = parseScheduleTime(meeting?.start_at || meeting?.start_time);
+  if (start === null) {
+    return null;
+  }
+
+  const explicitEnd = parseScheduleTime(meeting?.end_at || meeting?.end_time);
+  if (explicitEnd !== null && explicitEnd.getTime() > start.getTime()) {
+    return { start, end: explicitEnd };
+  }
+
+  const durationMinutes = parsePositiveInteger(meeting?.duration);
+  if (durationMinutes === null) {
+    return null;
+  }
+
+  return {
+    start,
+    end: new Date(start.getTime() + durationMinutes * 60000),
+  };
+}
+
+function scheduleStartAt(meeting) {
+  const value = isObject(meeting) ? meeting.start_at || meeting.start_time : meeting;
+  const start = parseScheduleTime(value);
+  return start === null ? "" : start.toISOString();
+}
+
+function scheduleEndAt(meeting) {
+  if (!isObject(meeting)) {
+    const end = parseScheduleTime(meeting);
+    return end === null ? "" : end.toISOString();
+  }
+
+  const window = scheduleWindow(meeting);
+  return window === null ? "" : window.end.toISOString();
 }
 
 function sameMeeting(left, right) {
@@ -1152,6 +1320,10 @@ function sameMeeting(left, right) {
 }
 
 function parseZoomTime(value) {
+  return parseScheduleTime(value);
+}
+
+function parseScheduleTime(value) {
   if (!value) {
     return null;
   }
@@ -1299,7 +1471,11 @@ function logStateFields(state = {}) {
     age_seconds: stateAgeSeconds(state),
     in_use: isActiveState(state),
     active_meeting_id: String(state.active_meeting_id || ""),
+    active_meeting_start_at: String(state.active_meeting_start_at || ""),
+    active_meeting_end_at: String(state.active_meeting_end_at || ""),
     next_meeting_id: String(state.next_meeting_id || ""),
+    next_meeting_start_at: String(state.next_meeting_start_at || ""),
+    next_meeting_end_at: String(state.next_meeting_end_at || ""),
   };
 }
 

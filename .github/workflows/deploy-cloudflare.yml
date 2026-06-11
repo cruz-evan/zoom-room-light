@@ -40,6 +40,7 @@ jobs:
       ACTIVE_MEETING_LOOKAHEAD_MINUTES: ${{ vars.ACTIVE_MEETING_LOOKAHEAD_MINUTES }}
       EMPTY_ROOM_LOOKAHEAD_MINUTES: ${{ vars.EMPTY_ROOM_LOOKAHEAD_MINUTES }}
       ENDING_SOON_MINUTES: ${{ vars.ENDING_SOON_MINUTES || secrets.ENDING_SOON_MINUTES }}
+      SCHEDULE_END_CLEAR_GRACE_MINUTES: ${{ vars.SCHEDULE_END_CLEAR_GRACE_MINUTES || secrets.SCHEDULE_END_CLEAR_GRACE_MINUTES }}
 
     defaults:
       run:
@@ -112,7 +113,8 @@ jobs:
             SCHEDULE_LOOKAHEAD_MINUTES \
             ACTIVE_MEETING_LOOKAHEAD_MINUTES \
             EMPTY_ROOM_LOOKAHEAD_MINUTES \
-            ENDING_SOON_MINUTES
+            ENDING_SOON_MINUTES \
+            SCHEDULE_END_CLEAR_GRACE_MINUTES
           do
             echo "Removing timing secret if present: $name"
             if printf 'y\n' | npx wrangler secret delete "$name"; then
@@ -146,5 +148,6 @@ jobs:
           add_var ACTIVE_MEETING_LOOKAHEAD_MINUTES "$active_lookahead"
           add_var EMPTY_ROOM_LOOKAHEAD_MINUTES "$empty_lookahead"
           add_var ENDING_SOON_MINUTES "$ENDING_SOON_MINUTES"
+          add_var SCHEDULE_END_CLEAR_GRACE_MINUTES "$SCHEDULE_END_CLEAR_GRACE_MINUTES"
 
           npx wrangler deploy "${deploy_args[@]}"

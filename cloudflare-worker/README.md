@@ -95,7 +95,10 @@ is still supported as a global fallback.
 
 The scheduled poller runs every minute from the Cron Trigger in `wrangler.toml`.
 It uses Microsoft Graph client-credentials auth to read the configured calendar
-user's `calendarView`, then emits:
+user's `calendarView`. The Worker caches only compact schedule timing metadata
+in KV state: meeting IDs/topics plus start/end timestamps. The Pico does not
+receive or cache the schedule list; it still receives only the current command.
+The poller then emits:
 
 ```text
 starting_soon  when the next meeting starts within ACTIVE_MEETING_LOOKAHEAD_MINUTES during an active meeting,
@@ -103,8 +106,14 @@ starting_soon  when the next meeting starts within ACTIVE_MEETING_LOOKAHEAD_MINU
 ending_soon    when the active scheduled meeting ends within ENDING_SOON_MINUTES
 in_progress    while Zoom says the current meeting is running
 off            after meeting.ended when no next meeting is inside the empty-room window,
-               or when schedule warnings clear
+               when schedule warnings clear,
+               when a Zoom-active meeting is still active SCHEDULE_END_CLEAR_GRACE_MINUTES
+               after the cached scheduled end,
+               or at the cached scheduled end if Zoom never sent meeting.started
 ```
+
+Set `SCHEDULE_END_CLEAR_GRACE_MINUTES` as a GitHub Actions repository variable
+and Cloudflare Worker variable. It is not secret. The default is `5`.
 
 The Microsoft app registration needs application permission to read the target
 calendar, for example `Calendars.Read`, with admin consent granted. Prefer an

@@ -177,7 +177,7 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(record.state.active_meeting_id, "123");
   });
 
-  it("records mismatched meeting.ended webhooks without changing active state", async () => {
+  it("applies meeting.ended webhooks even when they do not match the active meeting", async () => {
     const relayEnv = env();
     await worker.fetch(
       await signedZoomRequest("https://relay.test/zoom/webhook", {
@@ -197,20 +197,20 @@ describe("Cloudflare Worker relay", () => {
     const responseBody = await json(response);
 
     assert.equal(response.status, 200);
-    assert.equal(responseBody.ignored, true);
+    assert.equal(responseBody.ignored, undefined);
 
     const historyRecords = [...relayEnv.STATE_KV.values.entries()]
       .filter(([key]) => key.startsWith("zoom-webhook:"))
       .map(([, value]) => JSON.parse(value));
-    const ignoredEnd = historyRecords.find((record) => record.event === "meeting.ended");
-    assert.equal(ignoredEnd.outcome, "ignored");
-    assert.equal(ignoredEnd.meeting.id, "other");
-    assert.equal(ignoredEnd.meeting.topic, "Org meeting");
-    assert.equal(ignoredEnd.state.active_meeting_id, "active");
+    const acceptedEnd = historyRecords.find((record) => record.event === "meeting.ended");
+    assert.equal(acceptedEnd.outcome, "accepted");
+    assert.equal(acceptedEnd.meeting.id, "other");
+    assert.equal(acceptedEnd.meeting.topic, "Org meeting");
+    assert.equal(acceptedEnd.state.command.mode, "off");
 
     const state = JSON.parse(relayEnv.STATE_KV.values.get("current-state"));
-    assert.equal(state.active_meeting_id, "active");
-    assert.equal(state.last_event, "meeting.started");
+    assert.equal(state.active_meeting_id, "");
+    assert.equal(state.last_event, "meeting.ended");
   });
 
   it("records but filters org-wide Zoom webhooks whose topics do not match", async () => {
@@ -584,7 +584,7 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "meeting.ended");
   });
 
-  it("keeps active state after the scheduled end until Zoom sends ended", () => {
+  it("keeps active state during the scheduled end grace window", () => {
     const now = Date.parse("2026-06-04T20:31:00Z");
     const current = {
       v: 1,
@@ -592,6 +592,8 @@ describe("Cloudflare Worker relay", () => {
       in_use: true,
       active_meeting_id: "missed-ended",
       active_topic: "Demo",
+      active_meeting_start_at: "2026-06-04T20:00:00.000Z",
+      active_meeting_end_at: "2026-06-04T20:30:00.000Z",
       last_event: "schedule.ending_soon",
       source: "schedule",
       zoom_event_ts: now - 31 * 60000,
@@ -612,7 +614,65 @@ describe("Cloudflare Worker relay", () => {
     );
     const state = testInternals.stateFromScheduleStatus(schedule, current);
 
-    assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
+    assert.deepEqual(state.command, { mode: "meeting_status", state: "ending_soon", minutes: 1 });
+    assert.equal(state.last_event, "schedule.ending_soon");
+  });
+
+  it("clears active state after the scheduled end grace window", () => {
+    const now = Date.parse("2026-06-04T20:36:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "ending_soon", minutes: 1 },
+      in_use: true,
+      active_meeting_id: "missed-ended",
+      active_topic: "Demo",
+      active_meeting_start_at: "2026-06-04T20:00:00.000Z",
+      active_meeting_end_at: "2026-06-04T20:30:00.000Z",
+      last_event: "schedule.ending_soon",
+      source: "schedule",
+      zoom_event_ts: now - 36 * 60000,
+      meeting: { id: "missed-ended", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "missed-ended",
+          topic: "Demo",
+          start_time: "2026-06-04T20:00:00Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env({ ENDING_SOON_MINUTES: "5", SCHEDULE_END_CLEAR_GRACE_MINUTES: "5" }),
+      now,
+    );
+    const state = testInternals.stateFromScheduleStatus(
+      schedule,
+      current,
+      env({ SCHEDULE_END_CLEAR_GRACE_MINUTES: "5" }),
+    );
+
+    assert.deepEqual(state.command, { mode: "off" });
+    assert.equal(state.last_event, "schedule.end_grace_clear");
+  });
+
+  it("clears a schedule-only meeting at the scheduled end when Zoom never started", () => {
+    const now = Date.parse("2026-06-04T20:30:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "starting_soon", minutes: 15 },
+      in_use: false,
+      next_meeting_id: "never-started",
+      next_meeting_topic: "Demo",
+      next_meeting_start_at: "2026-06-04T20:00:00.000Z",
+      next_meeting_end_at: "2026-06-04T20:30:00.000Z",
+      last_event: "schedule.upcoming",
+      source: "schedule",
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings([], current, env(), now);
+    const state = testInternals.stateFromScheduleStatus(schedule, current);
+
+    assert.deepEqual(state.command, { mode: "off" });
     assert.equal(state.last_event, "schedule.end_clear");
   });
 
