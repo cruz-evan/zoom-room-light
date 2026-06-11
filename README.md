@@ -151,8 +151,13 @@ python3 zoom_room_stub.py status free
 python3 zoom_room_stub.py scenario --step-seconds 8
 ```
 
-Force a fresh encrypted OTA Wi-Fi/config publish for devices to detect on their
-next OTA poll:
+Request an immediate OTA check from devices polling the Worker:
+
+```bash
+ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py ota force
+```
+
+Publish a fresh encrypted OTA Wi-Fi/config payload for devices to detect:
 
 ```bash
 python3 zoom_room_stub.py ota config --repo cruz-evan/zoom-room-light --ref main

@@ -208,3 +208,54 @@ def test_ota_config_runs_gh_workflow(monkeypatch, capsys):
         )
     ]
     assert "Workflow dispatched" in capsys.readouterr().out
+
+
+def test_ota_force_posts_to_simulate_ota(monkeypatch, capsys):
+    calls = []
+
+    def fake_request_json(server_url, method, path, body=None, *, token=None):
+        calls.append((server_url, method, path, body, token))
+        return {
+            "state": {
+                "command": {"mode": "off"},
+                "last_event": "simulate.ota.requested",
+                "ota_check_requested_at": "2026-06-11T22:30:00Z",
+            }
+        }
+
+    monkeypatch.setattr(zoom_room_stub, "request_json", fake_request_json)
+
+    result = zoom_room_stub.cmd_ota_force(
+        argparse.Namespace(
+            server="https://relay.test",
+            admin_token="admin-token",
+            dry_run=False,
+        )
+    )
+
+    assert result == 0
+    assert calls == [
+        (
+            "https://relay.test",
+            "POST",
+            "/simulate/ota",
+            None,
+            "admin-token",
+        )
+    ]
+    output = capsys.readouterr().out
+    assert "EVENT=simulate.ota.requested" in output
+    assert "OTA_REQUESTED=2026-06-11T22:30:00Z" in output
+
+
+def test_ota_force_dry_run_prints_request(capsys):
+    result = zoom_room_stub.cmd_ota_force(
+        argparse.Namespace(
+            server="https://relay.test/",
+            admin_token="admin-token",
+            dry_run=True,
+        )
+    )
+
+    assert result == 0
+    assert "POST https://relay.test/simulate/ota" in capsys.readouterr().out

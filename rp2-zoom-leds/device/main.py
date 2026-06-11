@@ -262,6 +262,7 @@ def state_summary(state):
         "updated_at",
         "source",
         "poll_seconds",
+        "ota_check_requested_at",
     ):
         if key in state:
             summary[key] = state.get(key)
@@ -373,6 +374,7 @@ class NetworkCommandReader:
         self.last_command = None
         self.last_command_emitted_ms = 0
         self.last_diagnostic_ms = 0
+        self.last_ota_check_request = ""
 
         if self.enabled and (connect_wifi_profiles is None or profiles_from_config is None):
             print("Wi-Fi module unavailable; staying in serial mode.")
@@ -623,6 +625,16 @@ class NetworkCommandReader:
                 now,
                 int(poll_seconds * 1000),
             )
+
+            ota_check_requested_at = str(state.get("ota_check_requested_at") or "")
+            if ota_check_requested_at and ota_check_requested_at != self.last_ota_check_request:
+                self.last_ota_check_request = ota_check_requested_at
+                self.telemetry.log(
+                    "ota_force_requested",
+                    requested_at=ota_check_requested_at,
+                    state=state_info,
+                )
+                self._poll_ota(time.ticks_ms())
 
             if normalized == self.last_command:
                 reapply_seconds = int(getattr(config, "STATE_REAPPLY_SECONDS", 60))

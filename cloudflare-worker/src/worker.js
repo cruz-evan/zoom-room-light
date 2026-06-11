@@ -278,6 +278,14 @@ async function handleSimulate(path, request, env) {
       updatedAt: now,
       source: "simulate",
     });
+  } else if (action === "ota" || action === "ota-check") {
+    state = {
+      ...previous,
+      ota_check_requested_at: now,
+      updated_at: now,
+      last_event: "simulate.ota.requested",
+      source: "simulate",
+    };
   } else {
     return jsonResponse({ error: "not_found" }, 404);
   }
@@ -782,6 +790,9 @@ function deviceStateResponse(state, env, deviceId = "") {
     updated_at: String(state.updated_at || ""),
     last_event: String(state.last_event || ""),
   };
+  if (state.ota_check_requested_at) {
+    response.ota_check_requested_at = String(state.ota_check_requested_at);
+  }
   if (deviceId) {
     response.device_id = deviceId;
   }

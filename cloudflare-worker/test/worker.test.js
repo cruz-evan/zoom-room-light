@@ -797,4 +797,24 @@ describe("Cloudflare Worker relay", () => {
       minutes: 3,
     });
   });
+
+  it("supports protected simulate ota endpoint for forcing a device OTA check", async () => {
+    const relayEnv = env();
+    const response = await worker.fetch(
+      new Request("https://relay.test/simulate/ota", {
+        method: "POST",
+        headers: { Authorization: "Bearer admin-token" },
+      }),
+      relayEnv,
+    );
+    assert.equal(response.status, 200);
+    const body = await json(response);
+    assert.equal(body.state.last_event, "simulate.ota.requested");
+    assert.match(body.state.ota_check_requested_at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.deepEqual(body.state.command, { mode: "off" });
+
+    const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
+    assert.equal(state.ota_check_requested_at, body.state.ota_check_requested_at);
+    assert.equal(state.last_event, "simulate.ota.requested");
+  });
 });

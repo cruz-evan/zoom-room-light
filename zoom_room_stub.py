@@ -120,6 +120,17 @@ def parse_args() -> argparse.Namespace:
         help="print the gh command without running it",
     )
     ota_config.set_defaults(func=cmd_ota_config)
+    ota_force = ota_subparsers.add_parser(
+        "force",
+        parents=[control_parent],
+        help="request an immediate OTA check from devices polling the Worker",
+    )
+    ota_force.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the Worker request without sending it",
+    )
+    ota_force.set_defaults(func=cmd_ota_force)
 
     return parser.parse_args()
 
@@ -290,6 +301,16 @@ def cmd_ota_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ota_force(args: argparse.Namespace) -> int:
+    require_admin_token(args)
+    if args.dry_run:
+        print(f"POST {args.server.rstrip('/')}/simulate/ota")
+        return 0
+    response = force_device_ota(args.server, admin_token=args.admin_token)
+    print_result(response)
+    return 0
+
+
 def build_ota_config_command(args: argparse.Namespace) -> list[str]:
     command = ["gh", "workflow", "run", args.workflow, "--ref", args.ref]
     if args.repo:
@@ -341,6 +362,10 @@ def set_free_status(server_url: str, *, admin_token: str | None = None) -> dict[
 
 def reset_room_status(server_url: str, *, admin_token: str | None = None) -> dict[str, Any]:
     return post_simulate(server_url, "reset", admin_token=admin_token)
+
+
+def force_device_ota(server_url: str, *, admin_token: str | None = None) -> dict[str, Any]:
+    return post_simulate(server_url, "ota", admin_token=admin_token)
 
 
 def read_device_state(server_url: str, *, device_token: str | None = None) -> dict[str, Any]:
@@ -435,6 +460,8 @@ def state_summary(state: dict[str, Any]) -> str:
         parts.append(f"UPDATED={state.get('updated_at')}")
     if state.get("poll_seconds") is not None:
         parts.append(f"POLL={state.get('poll_seconds')}s")
+    if state.get("ota_check_requested_at"):
+        parts.append(f"OTA_REQUESTED={state.get('ota_check_requested_at')}")
     return " ".join(parts)
 
 
