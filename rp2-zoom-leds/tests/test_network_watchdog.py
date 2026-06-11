@@ -14,7 +14,11 @@ class FakeLock:
 
 class FakeReader:
     enabled = True
+    state_enabled = True
     failures = 2
+
+    def serial_override_active(self):
+        return False
 
 
 class FakeTelemetry:
@@ -88,9 +92,10 @@ def load_device_main(monkeypatch):
     return module
 
 
-def make_threaded_reader(module, now=0, last_heartbeat_ms=0):
+def make_threaded_reader(module, now=0, last_heartbeat_ms=0, last_state_response_ms=0):
     threaded = object.__new__(module.ThreadedNetworkCommandReader)
     threaded.reader = FakeReader()
+    threaded.reader.last_state_response_ms = last_state_response_ms
     threaded.telemetry = FakeTelemetry()
     threaded.lock = FakeLock()
     threaded.pending_command = {"mode": "off"}
@@ -106,7 +111,7 @@ def test_network_thread_watchdog_allows_fresh_heartbeat(monkeypatch):
     module = load_device_main(monkeypatch)
     machine = FakeMachine()
     module.machine = machine
-    threaded = make_threaded_reader(module, now=50000, last_heartbeat_ms=0)
+    threaded = make_threaded_reader(module, now=25000, last_heartbeat_ms=0, last_state_response_ms=0)
 
     command = threaded.poll()
 
@@ -139,9 +144,51 @@ def test_network_thread_watchdog_resets_stale_thread(monkeypatch):
         (
             "network_thread_watchdog_reset",
             {
+                "reason": "thread_heartbeat",
                 "stale_ms": 31000,
                 "watchdog_seconds": 30,
                 "reader_enabled": True,
+                "state_enabled": True,
+                "reader_failures": 2,
+            },
+        )
+    ]
+
+
+def test_network_thread_watchdog_resets_stale_state_response(monkeypatch):
+    module = load_device_main(monkeypatch)
+    machine = FakeMachine()
+    sleeps = []
+    marker_writes = []
+    module.machine = machine
+    module._sleep_ms = sleeps.append
+    module.mark_watchdog_reset_pending = lambda: marker_writes.append(True)
+    threaded = make_threaded_reader(
+        module,
+        now=31000,
+        last_heartbeat_ms=31000,
+        last_state_response_ms=0,
+    )
+
+    try:
+        threaded.poll()
+    except RuntimeError as exc:
+        assert str(exc) == "reset called"
+    else:
+        raise AssertionError("expected machine.reset() to be called")
+
+    assert machine.reset_count == 1
+    assert marker_writes == [True]
+    assert sleeps == [250]
+    assert threaded.telemetry.events == [
+        (
+            "network_thread_watchdog_reset",
+            {
+                "reason": "state_response",
+                "stale_ms": 31000,
+                "watchdog_seconds": 30,
+                "reader_enabled": True,
+                "state_enabled": True,
                 "reader_failures": 2,
             },
         )

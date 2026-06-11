@@ -369,8 +369,9 @@ RESOURCE_MONITOR_INCLUDE_TEMP = True
 
 State polling runs on a background thread so LED animation and telemetry can
 keep moving while Wi-Fi or HTTP requests are in progress. If that network thread
-stops heartbeating, the main loop can reset the board automatically; this
-recovers from stuck state, OTA, DNS, or Wi-Fi calls without physically
+stops heartbeating, or if state polling does not produce a successful response
+within the watchdog window, the main loop can reset the board automatically.
+This recovers from stuck state, OTA, DNS, or Wi-Fi calls without physically
 disconnecting power.
 
 The watchdog is enabled by default:
@@ -380,10 +381,11 @@ NETWORK_THREAD_WATCHDOG_ENABLED = True
 NETWORK_THREAD_WATCHDOG_SECONDS = 30
 ```
 
-When the watchdog trips, telemetry emits `network_thread_watchdog_reset`, waits
-briefly for the UDP packet to leave, writes a one-shot reset marker, and then
-calls `machine.reset()`. On the next boot, the marker is consumed and the
-startup lighting sequence is skipped once.
+When the watchdog trips, telemetry emits `network_thread_watchdog_reset` with
+`reason=thread_heartbeat` or `reason=state_response`, waits briefly for the UDP
+packet to leave, writes a one-shot reset marker, and then calls
+`machine.reset()`. On the next boot, the marker is consumed and the startup
+lighting sequence is skipped once.
 
 ## GitHub OTA Updates
 

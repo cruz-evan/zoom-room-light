@@ -388,17 +388,41 @@ class ThreadedNetworkCommandReader:
             return 0
         return stale_ms
 
+    def _state_response_stale_ms(self, now):
+        if not self.watchdog_enabled:
+            return 0
+        if not getattr(self.reader, "enabled", False):
+            return 0
+        if not getattr(self.reader, "state_enabled", False):
+            return 0
+        try:
+            if self.reader.serial_override_active():
+                return 0
+        except Exception:
+            pass
+
+        stale_ms = time.ticks_diff(now, getattr(self.reader, "last_state_response_ms", now))
+        if stale_ms < self.watchdog_ms:
+            return 0
+        return stale_ms
+
     def _reset_if_stale(self, now):
+        reason = "thread_heartbeat"
         stale_ms = self._thread_stale_ms(now)
+        if stale_ms <= 0:
+            reason = "state_response"
+            stale_ms = self._state_response_stale_ms(now)
         if stale_ms <= 0 or self.resetting:
             return
 
         self.resetting = True
         self.telemetry.log(
             "network_thread_watchdog_reset",
+            reason=reason,
             stale_ms=stale_ms,
             watchdog_seconds=int(self.watchdog_ms / 1000),
             reader_enabled=getattr(self.reader, "enabled", False),
+            state_enabled=getattr(self.reader, "state_enabled", False),
             reader_failures=getattr(self.reader, "failures", 0),
         )
         mark_watchdog_reset_pending()
@@ -460,6 +484,7 @@ class NetworkCommandReader:
         self.last_command_emitted_ms = 0
         self.last_diagnostic_ms = 0
         self.last_ota_check_request = ""
+        self.last_state_response_ms = time.ticks_ms()
 
         if self.enabled and (connect_wifi_profiles is None or profiles_from_config is None):
             print("Wi-Fi module unavailable; staying in serial mode.")
@@ -541,6 +566,7 @@ class NetworkCommandReader:
                     getattr(config, "DEVICE_ID", ""),
                     getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
                 )
+                self.last_state_response_ms = time.ticks_ms()
                 fetched_ms = time.ticks_diff(time.ticks_ms(), started)
                 state_info = state_summary(state)
                 poll_seconds = state_poll_seconds_from_response(state)
@@ -747,6 +773,7 @@ class NetworkCommandReader:
                 getattr(config, "DEVICE_ID", ""),
                 getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
             )
+            self.last_state_response_ms = time.ticks_ms()
             fetched_ms = time.ticks_diff(time.ticks_ms(), started)
             state_info = state_summary(state)
             poll_seconds = state_poll_seconds_from_response(state)
@@ -850,4 +877,5 @@ if NullResourceMonitor is None:
             pass
 
 
-main()
+if __name__ == "__main__":
+    main()
