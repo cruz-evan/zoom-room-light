@@ -14,6 +14,16 @@ def _socket_module():
     return socket
 
 
+def _cache_bust_token():
+    try:
+        import time
+        if hasattr(time, "ticks_ms"):
+            return str(time.ticks_ms())
+    except Exception:
+        pass
+    return None
+
+
 def _set_default_timeout(seconds):
     try:
         socket = _socket_module()
@@ -29,15 +39,23 @@ def _requests_get(requests, url, headers, timeout_seconds):
         return requests.get(url, headers=headers)
 
 
-def state_url_for_device(url, device_id=""):
-    if not device_id:
-        return url
-    if "{device_id}" in url:
-        return url.replace("{device_id}", str(device_id))
-    if "device_id=" in url:
+def _append_query_param(url, key, value):
+    if value is None or value == "":
         return url
     separator = "&" if "?" in url else "?"
-    return "%s%sdevice_id=%s" % (url, separator, device_id)
+    return "%s%s%s=%s" % (url, separator, key, value)
+
+
+def state_url_for_device(url, device_id="", cache_bust=None):
+    resolved = url
+    if not device_id:
+        return _append_query_param(resolved, "_", cache_bust)
+    if "{device_id}" in resolved:
+        resolved = resolved.replace("{device_id}", str(device_id))
+        return _append_query_param(resolved, "_", cache_bust)
+    if "device_id=" not in resolved:
+        resolved = _append_query_param(resolved, "device_id", device_id)
+    return _append_query_param(resolved, "_", cache_bust)
 
 
 def fetch_state(url, token="", device_id="", timeout_seconds=4):
@@ -48,12 +66,14 @@ def fetch_state(url, token="", device_id="", timeout_seconds=4):
         headers["Authorization"] = "Bearer %s" % token
     if device_id:
         headers["X-Device-ID"] = str(device_id)
+    headers["Cache-Control"] = "no-cache"
+    headers["Pragma"] = "no-cache"
 
     try:
         _set_default_timeout(timeout_seconds)
         response = _requests_get(
             requests,
-            state_url_for_device(url, device_id),
+            state_url_for_device(url, device_id, _cache_bust_token()),
             headers,
             timeout_seconds,
         )

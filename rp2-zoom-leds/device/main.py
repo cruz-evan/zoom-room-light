@@ -352,6 +352,7 @@ class NetworkCommandReader:
         self.failures = 0
         self.wlan = None
         self.last_command = None
+        self.last_command_emitted_ms = 0
 
         if self.enabled and (connect_wifi_profiles is None or profiles_from_config is None):
             print("Wi-Fi module unavailable; staying in serial mode.")
@@ -382,6 +383,8 @@ class NetworkCommandReader:
     def pause_for_serial_override(self):
         override_seconds = int(getattr(config, "SERIAL_OVERRIDE_SECONDS", 10))
         self.serial_pause_until_ms = time.ticks_add(time.ticks_ms(), override_seconds * 1000)
+        self.last_command = None
+        self.last_command_emitted_ms = 0
         self.telemetry.log("serial_override", seconds=override_seconds)
 
     def serial_override_active(self):
@@ -409,6 +412,7 @@ class NetworkCommandReader:
                 normalized = normalize_command(command)
                 self.failures = 0
                 self.last_command = normalized
+                self.last_command_emitted_ms = time.ticks_ms()
                 self.next_poll_ms = time.ticks_add(
                     time.ticks_ms(),
                     int(poll_seconds * 1000),
@@ -570,9 +574,29 @@ class NetworkCommandReader:
             )
 
             if normalized == self.last_command:
+                reapply_seconds = int(getattr(config, "STATE_REAPPLY_SECONDS", 60))
+                reapply_due = (
+                    reapply_seconds > 0
+                    and time.ticks_diff(time.ticks_ms(), self.last_command_emitted_ms)
+                    >= reapply_seconds * 1000
+                )
+                if reapply_due:
+                    self.last_command_emitted_ms = time.ticks_ms()
+                    self.telemetry.log(
+                        "state_poll",
+                        changed=False,
+                        reapply=True,
+                        poll_seconds=poll_seconds,
+                        elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
+                        fetch_ms=fetched_ms,
+                        state=state_info,
+                        command=normalized,
+                    )
+                    return normalized
                 self.telemetry.log(
                     "state_poll",
                     changed=False,
+                    reapply=False,
                     poll_seconds=poll_seconds,
                     elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
                     fetch_ms=fetched_ms,
@@ -581,10 +605,12 @@ class NetworkCommandReader:
                 )
                 return None
             self.last_command = normalized
+            self.last_command_emitted_ms = time.ticks_ms()
             print("Network command:", normalized)
             self.telemetry.log(
                 "state_poll",
                 changed=True,
+                reapply=False,
                 poll_seconds=poll_seconds,
                 elapsed_ms=time.ticks_diff(time.ticks_ms(), started),
                 fetch_ms=fetched_ms,
@@ -613,6 +639,7 @@ class NetworkCommandReader:
                     normalized = {"mode": "off"}
                 if normalized != self.last_command:
                     self.last_command = normalized
+                    self.last_command_emitted_ms = time.ticks_ms()
                     self.telemetry.log(
                         "network_fallback_command",
                         failures=self.failures,

@@ -26,3 +26,24 @@ def test_state_url_does_not_duplicate_device_id():
     url = "https://relay.test/device/state?device_id=board-room-a"
 
     assert state_url_for_device(url, "board-room-b") == url
+
+
+def test_state_url_appends_cache_buster_without_device_id():
+    assert (
+        state_url_for_device("https://relay.test/device/state", cache_bust="123")
+        == "https://relay.test/device/state?_=123"
+    )
+
+
+def test_state_url_appends_cache_buster_after_device_id():
+    assert (
+        state_url_for_device("https://relay.test/device/state", "board-room-a", cache_bust="123")
+        == "https://relay.test/device/state?device_id=board-room-a&_=123"
+    )
+
+
+def test_state_url_appends_cache_buster_to_template_url():
+    assert (
+        state_url_for_device("https://relay.test/device/{device_id}/state", "board-room-a", cache_bust="123")
+        == "https://relay.test/device/board-room-a/state?_=123"
+    )
