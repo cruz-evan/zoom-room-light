@@ -323,7 +323,7 @@ TELEMETRY_ENABLED = True
 TELEMETRY_HOST = "255.255.255.255"
 TELEMETRY_PORT = 9977
 TELEMETRY_DEVICE_ID = DEVICE_ID
-RESOURCE_MONITOR_ENABLED = True
+RESOURCE_MONITOR_ENABLED = False
 ```
 
 Broadcast is convenient because the Pico does not need to know your laptop IP.
@@ -357,7 +357,7 @@ for "we are not keeping up."
 Useful knobs in `device/secrets.py`:
 
 ```python
-RESOURCE_MONITOR_ENABLED = TELEMETRY_ENABLED
+RESOURCE_MONITOR_ENABLED = False
 RESOURCE_MONITOR_SAMPLE_SECONDS = 10
 RESOURCE_MONITOR_CPU_WARN_PERCENT = 80
 RESOURCE_MONITOR_MIN_FREE_BYTES = 24000
@@ -420,7 +420,7 @@ cp device/secrets.example.py device/secrets.py
 Set the relay fields and the GitHub Pages manifest URL in `device/secrets.py`:
 
 ```python
-STATE_URL = "https://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/device/state"
+STATE_URL = "http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/device/state"
 DEVICE_TOKEN = ""
 OTA_MANIFEST_URL = "https://cruz-evan.github.io/zoom-room-light/manifest.json"
 OTA_TOKEN = ""

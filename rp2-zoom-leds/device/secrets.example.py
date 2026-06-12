@@ -76,7 +76,7 @@ TELEMETRY_DEVICE_ID = DEVICE_ID
 # Optional resource monitor sent over the same telemetry UDP channel. It emits
 # resource_sample events with heap free bytes, loop timing, estimated CPU busy
 # percent, over-budget loop counts, clock speed, and Pico CPU temperature.
-RESOURCE_MONITOR_ENABLED = TELEMETRY_ENABLED
+RESOURCE_MONITOR_ENABLED = False
 RESOURCE_MONITOR_SAMPLE_SECONDS = 10
 RESOURCE_MONITOR_CPU_WARN_PERCENT = 80
 RESOURCE_MONITOR_MIN_FREE_BYTES = 24000

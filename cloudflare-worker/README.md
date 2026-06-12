@@ -206,7 +206,7 @@ curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
 In `/Users/connor/Documents/Hackathon/rp2-zoom-leds/device/secrets.py`, set:
 
 ```python
-STATE_URL = "https://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
+STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
 DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
 ```
 

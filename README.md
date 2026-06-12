@@ -114,7 +114,47 @@ contract:
 | Zoom webhook | `meeting.started` | `{"mode":"meeting_status","state":"in_progress"}` |
 | Zoom webhook | `meeting.ended` | `{"mode":"off"}` or `starting_soon` when the next scheduled meeting is within `EMPTY_ROOM_LOOKAHEAD_MINUTES` |
 | Schedule poll | upcoming meeting inside `ACTIVE_MEETING_LOOKAHEAD_MINUTES` or `EMPTY_ROOM_LOOKAHEAD_MINUTES` | `{"mode":"meeting_status","state":"starting_soon","minutes":5}` or `minutes:15` |
+| Schedule poll | active scheduled meeting | `{"mode":"meeting_status","state":"in_progress"}` |
 | Schedule poll | active scheduled meeting inside `ENDING_SOON_MINUTES` | `{"mode":"meeting_status","state":"ending_soon","minutes":5}` |
+
+At a high level, the Worker keeps one persisted room state in Workers KV. Zoom
+webhooks are the real-time signal, and Microsoft Graph schedule polls are the
+calendar fallback plus empty-room signal. The Pico does not decide meeting
+state; it only polls `/device/state` and renders the persisted command.
+
+Zoom state changes:
+
+- `meeting.started` writes `meeting_status / in_progress`, sets
+  `source: "zoom"`, records `last_event: "meeting.started"`, and marks
+  `in_use: true`.
+- `meeting.ended` normally writes `off`, sets `source: "zoom"`, records
+  `last_event: "meeting.ended"`, and marks `in_use: false`.
+- After `meeting.ended`, the Worker may immediately check Microsoft Graph. If a
+  different meeting is starting soon, it can write `starting_soon` instead of
+  staying `off`.
+- Zoom events use `zoom_event_ts` stale-event protection so an older
+  `meeting.started` cannot resurrect a meeting after a newer `meeting.ended`.
+
+Cloudflare Cron runs the Microsoft Graph schedule check every minute. The
+schedule check computes three signals from the room calendar:
+
+- `upcoming`: a meeting starts inside the configured lookahead window.
+- `active`: the current time is inside a scheduled meeting window.
+- `ending`: an active scheduled meeting is inside `ENDING_SOON_MINUTES`.
+
+Schedule state changes:
+
+- no active Zoom state plus `upcoming` writes `meeting_status / starting_soon`
+  with `last_event: "schedule.upcoming"`.
+- no active Zoom state plus `active` writes `meeting_status / in_progress` with
+  `last_event: "schedule.active"`.
+- active state plus `ending` writes `meeting_status / ending_soon` with
+  `last_event: "schedule.ending_soon"`.
+- a schedule-driven meeting that reaches its scheduled end writes `off` with
+  `last_event: "schedule.end_clear"` or `schedule.end_grace_clear`.
+
+One important priority rule: if Zoom explicitly ended the same scheduled
+meeting early, Graph should not immediately resurrect it as `in_progress`.
 
 The protected simulation routes set the same states directly:
 
@@ -192,7 +232,7 @@ cp device/secrets.example.py device/secrets.py
 For production polling, set the Pico's `STATE_URL` to the Worker endpoint:
 
 ```python
-STATE_URL = "https://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
+STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
 DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
 ```
 

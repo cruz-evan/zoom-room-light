@@ -395,6 +395,81 @@ describe("Cloudflare Worker relay", () => {
     }
   });
 
+  it("does not let the post-ended schedule check resurrect an active calendar window", async () => {
+    const relayEnv = env({
+      MICROSOFT_TENANT_ID: "ended-tenant",
+      MICROSOFT_CLIENT_ID: "ended-client",
+      MICROSOFT_CLIENT_SECRET: "ended-secret",
+      MICROSOFT_CALENDAR_USER_ID: "room@example.com",
+    });
+    const activeStart = new Date(Date.now() - 60 * 1000).toISOString();
+    const activeEnd = new Date(Date.now() + 60 * 1000).toISOString();
+    const originalFetch = globalThis.fetch;
+
+    await relayEnv.STATE_KV.put(
+      "current-state",
+      JSON.stringify({
+        v: 1,
+        command: { mode: "meeting_status", state: "ending_soon", minutes: 5 },
+        updated_at: new Date(Date.now() - 15 * 1000).toISOString(),
+        last_event: "schedule.ending_soon",
+        source: "schedule",
+        zoom_event_ts: 0,
+        in_use: true,
+        active_meeting_id: "calendar-active",
+        active_topic: "Board Room",
+        active_meeting_start_at: activeStart,
+        active_meeting_end_at: activeEnd,
+        next_meeting_id: "",
+        next_meeting_topic: "",
+        next_meeting_start_at: "",
+        next_meeting_end_at: "",
+        next_meeting_minutes: null,
+        meeting: { id: "calendar-active", uuid: "", topic: "Board Room" },
+      }),
+    );
+
+    globalThis.fetch = async (url) => {
+      const rawUrl = String(url);
+      if (rawUrl === "https://login.microsoftonline.com/ended-tenant/oauth2/v2.0/token") {
+        return new Response(JSON.stringify({ access_token: "schedule-token", expires_in: 3600 }), { status: 200 });
+      }
+      if (rawUrl.includes("https://graph.microsoft.com/v1.0/users/room%40example.com/calendarView?")) {
+        return new Response(
+          JSON.stringify({
+            value: [
+              {
+                id: "calendar-active",
+                subject: "Board Room",
+                start: { dateTime: activeStart, timeZone: "UTC" },
+                end: { dateTime: activeEnd, timeZone: "UTC" },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ value: [] }), { status: 200 });
+    };
+
+    try {
+      const response = await worker.fetch(
+        await signedZoomRequest("https://relay.test/zoom/webhook", {
+          event: "meeting.ended",
+          payload: { object: { id: "zoom-active", topic: "Board Room" } },
+        }),
+        relayEnv,
+      );
+      assert.equal(response.status, 200);
+
+      const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
+      assert.deepEqual(state.command, { mode: "off" });
+      assert.equal(state.last_event, "meeting.ended");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("ignores older Zoom events that arrive out of order", async () => {
     const relayEnv = env();
 
@@ -472,6 +547,42 @@ describe("Cloudflare Worker relay", () => {
 
     assert.equal(schedule.upcoming.minutes, 15);
     assert.equal(schedule.upcoming.meeting.id, "empty-room-warning");
+  });
+
+  it("promotes a schedule-only upcoming meeting to active once it starts", () => {
+    const now = Date.parse("2026-06-04T20:05:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "starting_soon", minutes: 5 },
+      in_use: false,
+      next_meeting_id: "calendar-event-id",
+      next_meeting_topic: "Demo",
+      next_meeting_start_at: "2026-06-04T20:00:00.000Z",
+      next_meeting_end_at: "2026-06-04T20:30:00.000Z",
+      last_event: "schedule.upcoming",
+      source: "schedule",
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "calendar-event-id",
+          topic: "Demo",
+          start_time: "2026-06-04T20:00:00Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env(),
+      now,
+    );
+    const state = testInternals.stateFromScheduleStatus(schedule, current, env(), now);
+
+    assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
+    assert.equal(state.last_event, "schedule.active");
+    assert.equal(state.in_use, true);
+    assert.equal(state.active_meeting_id, "calendar-event-id");
+    assert.equal(state.active_meeting_start_at, "2026-06-04T20:00:00.000Z");
+    assert.equal(state.active_meeting_end_at, "2026-06-04T20:30:00.000Z");
   });
 
   it("uses a 5 minute upcoming window while a meeting is already active", () => {

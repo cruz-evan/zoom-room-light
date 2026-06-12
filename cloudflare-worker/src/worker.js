@@ -198,7 +198,7 @@ async function applyPostZoomEventScheduleCheck(event, state, env) {
     const nowMs = Date.now();
     const meetings = await listScheduleMeetings(env, nowMs);
     const schedule = scheduleStatusFromMeetings(meetings, state, env, nowMs);
-    const next = stateFromScheduleStatus(schedule, state, env, nowMs);
+    const next = stateFromScheduleStatus(scheduleWithoutActiveMeeting(schedule), state, env, nowMs);
 
     logRelayEvent("zoom_webhook_schedule_check", {
       zoom_event: event,
@@ -216,6 +216,14 @@ async function applyPostZoomEventScheduleCheck(event, state, env) {
     });
     return state;
   }
+}
+
+function scheduleWithoutActiveMeeting(schedule) {
+  return {
+    ...schedule,
+    active: null,
+    ending: null,
+  };
 }
 
 async function handleUrlValidation(payload, secretToken) {
@@ -737,6 +745,19 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     return currentState;
   }
 
+  if (schedule.active && !zoomEndedSameScheduledMeeting(currentState, schedule.active.meeting, activeMeeting)) {
+    return makeStoredState({
+      command: { mode: "meeting_status", state: "in_progress" },
+      lastEvent: "schedule.active",
+      updatedAt: now,
+      meeting: schedule.active.meeting,
+      source: "schedule",
+      zoomEventTs,
+      inUse: true,
+      activeMeeting: schedule.active.meeting,
+    });
+  }
+
   if (!schedule.upcoming && scheduleOnlyMeetingInProgress(currentState, nowMs)) {
     return currentState;
   }
@@ -1218,6 +1239,14 @@ function scheduleOnlyMeetingEnded(currentState, nowMs) {
   }
   const end = parseScheduleTime(currentState.next_meeting_end_at);
   return end !== null && nowMs >= end.getTime();
+}
+
+function zoomEndedSameScheduledMeeting(currentState, scheduledMeeting, currentMeeting = activeMeetingFromState(currentState)) {
+  return (
+    String(currentState.source || "") === "zoom" &&
+    String(currentState.last_event || "") === "meeting.ended" &&
+    sameMeeting(currentMeeting, scheduledMeeting)
+  );
 }
 
 function positiveMinutes(value, fallback) {
