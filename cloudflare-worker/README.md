@@ -108,13 +108,18 @@ ending_soon    when the active scheduled meeting ends within ENDING_SOON_MINUTES
 in_progress    while Zoom says the current meeting is running
 off            after meeting.ended when no next meeting is inside the empty-room window,
                when schedule warnings clear,
-               when a Zoom-active meeting is still active SCHEDULE_END_CLEAR_GRACE_MINUTES
-               after the cached scheduled end,
-               or at the cached scheduled end if Zoom never sent meeting.started
+               at the cached scheduled end if no accepted Zoom meeting.started is active,
+               or SCHEDULE_END_CLEAR_GRACE_MINUTES after the cached scheduled end
+               when an accepted Zoom meeting.started has not been closed by meeting.ended
 ```
 
 Set `SCHEDULE_END_CLEAR_GRACE_MINUTES` as a GitHub Actions repository variable
 and Cloudflare Worker variable. It is not secret. The default is `5`.
+
+The Worker persists Zoom lifecycle metadata in KV separately from the visible
+Pico command. Accepted Zoom `meeting.started` sets `zoom_active: true`, accepted
+Zoom `meeting.ended` sets it back to false, and Microsoft Graph schedule
+transitions preserve that field. The Pico does not receive these fields.
 
 The Microsoft app registration needs application permission to read the target
 calendar, for example `Calendars.Read`, with admin consent granted. Prefer an

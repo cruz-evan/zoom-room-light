@@ -132,6 +132,10 @@ Zoom state changes:
 - After `meeting.ended`, the Worker may immediately check Microsoft Graph. If a
   different meeting is starting soon, it can write `starting_soon` instead of
   staying `off`.
+- Accepted Zoom `meeting.started` and `meeting.ended` webhooks also update
+  persisted Zoom lifecycle fields such as `zoom_active`, `zoom_started_at`, and
+  `zoom_ended_at`. These fields are used only by the Worker and are not part of
+  the Pico polling response.
 - Zoom events use `zoom_event_ts` stale-event protection so an older
   `meeting.started` cannot resurrect a meeting after a newer `meeting.ended`.
 
@@ -151,10 +155,14 @@ Schedule state changes:
 - active state plus `ending` writes `meeting_status / ending_soon` with
   `last_event: "schedule.ending_soon"`.
 - a schedule-driven meeting that reaches its scheduled end writes `off` with
-  `last_event: "schedule.end_clear"` or `schedule.end_grace_clear`.
+  `last_event: "schedule.end_clear"` unless `zoom_active` is still true.
+- if `zoom_active` is still true when the scheduled event ends, the Worker keeps
+  the active/ending state for `SCHEDULE_END_CLEAR_GRACE_MINUTES`, then writes
+  `off` with `last_event: "schedule.end_grace_clear"`.
 
-One important priority rule: if Zoom explicitly ended the same scheduled
-meeting early, Graph should not immediately resurrect it as `in_progress`.
+One important priority rule: after an accepted Zoom `meeting.ended`, the
+immediate Graph follow-up check can surface a future `starting_soon` meeting but
+must not resurrect the current active Outlook window as `in_progress`.
 
 The protected simulation routes set the same states directly:
 

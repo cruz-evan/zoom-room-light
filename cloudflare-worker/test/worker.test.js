@@ -148,6 +148,12 @@ describe("Cloudflare Worker relay", () => {
     const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
     assert.deepEqual(state.command, { mode: "meeting_status", state: "in_progress" });
     assert.equal(state.last_event, "meeting.started");
+
+    const stored = JSON.parse(relayEnv.STATE_KV.values.get("current-state"));
+    assert.equal(stored.zoom_active, true);
+    assert.equal(stored.zoom_meeting_id, "123");
+    assert.equal(stored.zoom_topic, "Demo");
+    assert.match(stored.zoom_started_at, /^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("keeps a seven-day KV history record for signed Zoom webhooks", async () => {
@@ -325,6 +331,11 @@ describe("Cloudflare Worker relay", () => {
     const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
     assert.deepEqual(state.command, { mode: "off" });
     assert.equal(state.last_event, "meeting.ended");
+
+    const stored = JSON.parse(relayEnv.STATE_KV.values.get("current-state"));
+    assert.equal(stored.zoom_active, false);
+    assert.equal(stored.zoom_meeting_id, "123");
+    assert.match(stored.zoom_ended_at, /^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("checks the schedule on meeting.ended and starts the empty-room warning when the next meeting is within 15 minutes", async () => {
@@ -729,6 +740,52 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "schedule.ending_soon");
   });
 
+  it("keeps schedule-origin active state during grace when Zoom is still active", () => {
+    const now = Date.parse("2026-06-04T20:31:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "ending_soon", minutes: 1 },
+      in_use: true,
+      active_meeting_id: "calendar-active",
+      active_topic: "Demo",
+      active_meeting_start_at: "2026-06-04T20:00:00.000Z",
+      active_meeting_end_at: "2026-06-04T20:30:00.000Z",
+      last_event: "schedule.ending_soon",
+      source: "schedule",
+      zoom_event_ts: now - 31 * 60000,
+      zoom_active: true,
+      zoom_meeting_id: "zoom-active",
+      zoom_topic: "Demo",
+      zoom_started_at: "2026-06-04T20:00:10.000Z",
+      zoom_ended_at: "",
+      meeting: { id: "calendar-active", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "calendar-active",
+          topic: "Demo",
+          start_time: "2026-06-04T20:00:00Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env({ ENDING_SOON_MINUTES: "5", SCHEDULE_END_CLEAR_GRACE_MINUTES: "5" }),
+      now,
+    );
+    const state = testInternals.stateFromScheduleStatus(
+      schedule,
+      current,
+      env({ SCHEDULE_END_CLEAR_GRACE_MINUTES: "5" }),
+    );
+
+    assert.deepEqual(state.command, { mode: "meeting_status", state: "ending_soon", minutes: 1 });
+    assert.equal(state.last_event, "schedule.ending_soon");
+    assert.equal(state.source, "schedule");
+    assert.equal(state.zoom_active, true);
+    assert.equal(state.zoom_meeting_id, "zoom-active");
+  });
+
   it("clears schedule-origin active state at the scheduled end without grace", () => {
     const now = Date.parse("2026-06-04T20:31:00Z");
     const current = {
@@ -742,6 +799,7 @@ describe("Cloudflare Worker relay", () => {
       last_event: "schedule.ending_soon",
       source: "schedule",
       zoom_event_ts: 0,
+      zoom_active: false,
       meeting: { id: "schedule-ended", topic: "Demo" },
     };
     const schedule = testInternals.scheduleStatusFromMeetings(

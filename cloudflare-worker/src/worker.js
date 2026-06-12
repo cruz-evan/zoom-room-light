@@ -317,15 +317,27 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
       zoomEventTs: eventTs,
       inUse: true,
       activeMeeting: meeting,
+      zoomState: zoomStateFromStartedMeeting(meeting, eventTs),
     });
   }
 
   if (event === "meeting.ended") {
+    const nextMeeting = nextMeetingFromState(currentState);
     if (isStartingSoonState(currentState)) {
-      return null;
+      return makeStoredState({
+        command: normalizeCommand(currentState.command),
+        lastEvent: event,
+        updatedAt: now,
+        meeting,
+        source: "zoom",
+        zoomEventTs: eventTs,
+        inUse: false,
+        nextMeeting,
+        nextMeetingMinutes: currentState.next_meeting_minutes,
+        zoomState: zoomStateFromEndedMeeting(currentState, meeting, eventTs),
+      });
     }
 
-    const nextMeeting = nextMeetingFromState(currentState);
     if (nextMeeting.id || nextMeeting.uuid) {
       return makeStoredState({
         command: {
@@ -341,6 +353,7 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
         inUse: false,
         nextMeeting,
         nextMeetingMinutes: currentState.next_meeting_minutes,
+        zoomState: zoomStateFromEndedMeeting(currentState, meeting, eventTs),
       });
     }
 
@@ -352,6 +365,7 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
       source: "zoom",
       zoomEventTs: eventTs,
       inUse: false,
+      zoomState: zoomStateFromEndedMeeting(currentState, meeting, eventTs),
     });
   }
 
@@ -369,6 +383,7 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
       zoomEventTs: eventTs,
       inUse: false,
       nextMeeting: meeting,
+      zoomState: zoomStateFromState(currentState),
     });
   }
 
@@ -386,6 +401,7 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
       zoomEventTs: eventTs,
       inUse: true,
       activeMeeting: meeting,
+      zoomState: zoomStateFromState(currentState),
     });
   }
 
@@ -398,6 +414,7 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
       source: "zoom",
       zoomEventTs: eventTs,
       inUse: false,
+      zoomState: zoomStateFromEndedMeeting(currentState, meeting, eventTs),
     });
   }
 
@@ -631,6 +648,10 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
   const now = utcNow();
   const activeMeeting = activeMeetingFromState(currentState);
   const zoomEventTs = Number(currentState.zoom_event_ts || 0);
+  const makeScheduleState = (state) => makeStoredState({
+    ...state,
+    zoomState: zoomStateFromState(currentState),
+  });
 
   if (isActiveState(currentState)) {
     const currentNextMeeting = nextMeetingFromState(currentState);
@@ -639,7 +660,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     const scheduledActiveMeeting = schedule.ending?.meeting || schedule.active?.meeting || activeMeeting;
 
     if (shouldClearAfterScheduledEnd(currentState, schedule, env, nowMs)) {
-      return makeStoredState({
+      return makeScheduleState({
         command: { mode: "off" },
         lastEvent: usesScheduledEndClearGrace(currentState) ? "schedule.end_grace_clear" : "schedule.end_clear",
         updatedAt: now,
@@ -651,7 +672,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     }
 
     if (schedule.ending) {
-      return makeStoredState({
+      return makeScheduleState({
         command: {
           mode: "meeting_status",
           state: "ending_soon",
@@ -670,7 +691,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     }
 
     if (isEndingSoonState(currentState) && parseScheduleTime(currentState.active_meeting_end_at) !== null) {
-      return makeStoredState({
+      return makeScheduleState({
         command: normalizeCommand(currentState.command),
         lastEvent: currentState.last_event || "schedule.ending_soon",
         updatedAt: currentState.updated_at || now,
@@ -685,7 +706,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     }
 
     if (isEndingSoonState(currentState)) {
-      return makeStoredState({
+      return makeScheduleState({
         command: { mode: "meeting_status", state: "in_progress" },
         lastEvent: "schedule.end_clear",
         updatedAt: now,
@@ -700,7 +721,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     }
 
     if (schedule.active) {
-      return makeStoredState({
+      return makeScheduleState({
         command: normalizeCommand(currentState.command),
         lastEvent: currentState.last_event || "meeting.started",
         updatedAt: currentState.updated_at || now,
@@ -715,7 +736,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     }
 
     if (schedule.upcoming && !sameMeeting(currentNextMeeting, schedule.upcoming.meeting)) {
-      return makeStoredState({
+      return makeScheduleState({
         command: normalizeCommand(currentState.command),
         lastEvent: currentState.last_event || "meeting.started",
         updatedAt: now,
@@ -730,7 +751,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     }
 
     if (!schedule.upcoming && (currentNextMeeting.id || currentNextMeeting.uuid)) {
-      return makeStoredState({
+      return makeScheduleState({
         command: normalizeCommand(currentState.command),
         lastEvent: currentState.last_event || "meeting.started",
         updatedAt: now,
@@ -746,7 +767,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
   }
 
   if (schedule.active && !zoomEndedSameScheduledMeeting(currentState, schedule.active.meeting, activeMeeting)) {
-    return makeStoredState({
+    return makeScheduleState({
       command: { mode: "meeting_status", state: "in_progress" },
       lastEvent: "schedule.active",
       updatedAt: now,
@@ -763,7 +784,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
   }
 
   if (!schedule.upcoming && scheduleOnlyMeetingEnded(currentState, nowMs)) {
-    return makeStoredState({
+    return makeScheduleState({
       command: { mode: "off" },
       lastEvent: "schedule.end_clear",
       updatedAt: now,
@@ -774,7 +795,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
   }
 
   if (schedule.upcoming) {
-    return makeStoredState({
+    return makeScheduleState({
       command: {
         mode: "meeting_status",
         state: "starting_soon",
@@ -791,7 +812,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
   }
 
   if (isScheduleDrivenState(currentState)) {
-    return makeStoredState({
+    return makeScheduleState({
       command: { mode: "off" },
       lastEvent: "schedule.clear",
       updatedAt: now,
@@ -844,10 +865,12 @@ function makeStoredState({
   activeMeeting = {},
   nextMeeting = {},
   nextMeetingMinutes = null,
+  zoomState = {},
 }) {
   const normalizedCommand = normalizeCommand(command);
   const active = isObject(activeMeeting) ? activeMeeting : {};
   const next = isObject(nextMeeting) ? nextMeeting : {};
+  const zoom = normalizedZoomState(zoomState);
 
   return {
     v: 1,
@@ -856,6 +879,12 @@ function makeStoredState({
     last_event: lastEvent,
     source,
     zoom_event_ts: zoomEventTs,
+    zoom_active: zoom.active,
+    zoom_meeting_id: zoom.meeting_id,
+    zoom_meeting_uuid: zoom.meeting_uuid,
+    zoom_topic: zoom.topic,
+    zoom_started_at: zoom.started_at,
+    zoom_ended_at: zoom.ended_at,
     in_use: typeof inUse === "boolean" ? inUse : inferredInUse(normalizedCommand),
     active_meeting_id: String(active.id || active.uuid || ""),
     active_topic: String(active.topic || ""),
@@ -1168,7 +1197,13 @@ function shouldWriteState(currentState, nextState) {
     String(currentState.next_meeting_id || "") !== String(nextState.next_meeting_id || "") ||
     String(currentState.next_meeting_start_at || "") !== String(nextState.next_meeting_start_at || "") ||
     String(currentState.next_meeting_end_at || "") !== String(nextState.next_meeting_end_at || "") ||
-    String(currentState.next_meeting_minutes ?? "") !== String(nextState.next_meeting_minutes ?? "")
+    String(currentState.next_meeting_minutes ?? "") !== String(nextState.next_meeting_minutes ?? "") ||
+    String(currentState.zoom_active ?? "") !== String(nextState.zoom_active ?? "") ||
+    String(currentState.zoom_meeting_id || "") !== String(nextState.zoom_meeting_id || "") ||
+    String(currentState.zoom_meeting_uuid || "") !== String(nextState.zoom_meeting_uuid || "") ||
+    String(currentState.zoom_topic || "") !== String(nextState.zoom_topic || "") ||
+    String(currentState.zoom_started_at || "") !== String(nextState.zoom_started_at || "") ||
+    String(currentState.zoom_ended_at || "") !== String(nextState.zoom_ended_at || "")
   );
 }
 
@@ -1230,7 +1265,10 @@ function scheduledEndClearGraceMs(currentState, env) {
 }
 
 function usesScheduledEndClearGrace(currentState) {
-  return String(currentState.source || "") === "zoom";
+  if (typeof currentState.zoom_active === "boolean") {
+    return currentState.zoom_active;
+  }
+  return String(currentState.source || "") === "zoom" && isActiveState(currentState);
 }
 
 function scheduleOnlyMeetingInProgress(currentState, nowMs) {
@@ -1290,6 +1328,61 @@ function isScheduleDrivenState(state) {
 
 function inferredInUse(command) {
   return command.mode === "meeting_status" && (command.state === "in_progress" || command.state === "ending_soon");
+}
+
+function normalizedZoomState(state = {}) {
+  return {
+    active: state.active === true,
+    meeting_id: String(state.meeting_id || ""),
+    meeting_uuid: String(state.meeting_uuid || ""),
+    topic: String(state.topic || ""),
+    started_at: String(state.started_at || ""),
+    ended_at: String(state.ended_at || ""),
+  };
+}
+
+function zoomStateFromState(state = {}) {
+  return normalizedZoomState({
+    active: state.zoom_active === true,
+    meeting_id: state.zoom_meeting_id,
+    meeting_uuid: state.zoom_meeting_uuid,
+    topic: state.zoom_topic,
+    started_at: state.zoom_started_at,
+    ended_at: state.zoom_ended_at,
+  });
+}
+
+function zoomStateFromStartedMeeting(meeting, eventTs) {
+  const normalized = normalizedMeeting(meeting);
+  return normalizedZoomState({
+    active: true,
+    meeting_id: normalized.id,
+    meeting_uuid: normalized.uuid,
+    topic: normalized.topic,
+    started_at: zoomEventTimeIso(eventTs),
+    ended_at: "",
+  });
+}
+
+function zoomStateFromEndedMeeting(currentState, meeting, eventTs) {
+  const currentZoom = zoomStateFromState(currentState);
+  const normalized = normalizedMeeting(meeting);
+  return normalizedZoomState({
+    active: false,
+    meeting_id: normalized.id || currentZoom.meeting_id,
+    meeting_uuid: normalized.uuid || currentZoom.meeting_uuid,
+    topic: normalized.topic || currentZoom.topic,
+    started_at: currentZoom.started_at,
+    ended_at: zoomEventTimeIso(eventTs),
+  });
+}
+
+function zoomEventTimeIso(eventTs) {
+  const parsed = Number(eventTs);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return new Date(parsed).toISOString();
+  }
+  return utcNow();
 }
 
 function activeMeetingFromState(state) {
@@ -1518,6 +1611,10 @@ function logStateFields(state = {}) {
     updated_at: String(state.updated_at || ""),
     age_seconds: stateAgeSeconds(state),
     in_use: isActiveState(state),
+    zoom_active: state.zoom_active === true,
+    zoom_meeting_id: String(state.zoom_meeting_id || ""),
+    zoom_started_at: String(state.zoom_started_at || ""),
+    zoom_ended_at: String(state.zoom_ended_at || ""),
     active_meeting_id: String(state.active_meeting_id || ""),
     active_meeting_start_at: String(state.active_meeting_start_at || ""),
     active_meeting_end_at: String(state.active_meeting_end_at || ""),
