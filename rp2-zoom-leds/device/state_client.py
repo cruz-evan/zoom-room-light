@@ -1,3 +1,9 @@
+try:
+    import gc
+except ImportError:
+    gc = None
+
+
 def _requests_module():
     try:
         import urequests as requests
@@ -70,6 +76,8 @@ def fetch_state(url, token="", device_id="", timeout_seconds=4):
     headers["Pragma"] = "no-cache"
 
     try:
+        if gc is not None:
+            gc.collect()
         _set_default_timeout(timeout_seconds)
         response = _requests_get(
             requests,
@@ -83,3 +91,5 @@ def fetch_state(url, token="", device_id="", timeout_seconds=4):
     finally:
         if response is not None:
             response.close()
+        if gc is not None:
+            gc.collect()

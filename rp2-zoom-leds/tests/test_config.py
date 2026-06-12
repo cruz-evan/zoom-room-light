@@ -128,3 +128,49 @@ def test_resource_monitor_can_be_disabled_separately():
     )
 
     assert config.RESOURCE_MONITOR_ENABLED is False
+
+
+def test_ota_config_is_disabled_by_default_even_when_configured():
+    config = load_config_with_secrets(
+        WIFI_SSID="wifi",
+        OTA_MANIFEST_URL="https://example.test/manifest.json",
+        OTA_CONFIG_KEY="secret",
+    )
+
+    assert config.OTA_CONFIG_ENABLED is False
+
+
+def test_app_ota_is_disabled_by_default_even_when_configured():
+    config = load_config_with_secrets(
+        WIFI_SSID="wifi",
+        OTA_MANIFEST_URL="https://example.test/manifest.json",
+    )
+
+    assert config.OTA_ENABLED is False
+
+
+def test_app_ota_can_be_explicitly_enabled():
+    config = load_config_with_secrets(
+        WIFI_SSID="wifi",
+        OTA_MANIFEST_URL="https://example.test/manifest.json",
+        OTA_ENABLED=True,
+    )
+
+    assert config.OTA_ENABLED is True
+
+
+def test_hardware_watchdog_is_disabled_by_default():
+    config = load_config_with_secrets()
+
+    assert config.HARDWARE_WATCHDOG_ENABLED is False
+
+
+def test_ota_config_can_be_explicitly_enabled():
+    config = load_config_with_secrets(
+        WIFI_SSID="wifi",
+        OTA_MANIFEST_URL="https://example.test/manifest.json",
+        OTA_CONFIG_KEY="secret",
+        OTA_CONFIG_ENABLED=True,
+    )
+
+    assert config.OTA_CONFIG_ENABLED is True

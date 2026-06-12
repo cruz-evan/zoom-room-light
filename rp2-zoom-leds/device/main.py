@@ -54,6 +54,8 @@ except Exception:
 
 
 WATCHDOG_RESET_MARKER = "network_watchdog_reset.flag"
+OTA_CONFIG_CHECK_MARKER = "ota_config_check.flag"
+STATE_REQUEST_MARKER = "state_request.flag"
 
 
 def _sleep_ms(delay_ms):
@@ -83,6 +85,73 @@ def consume_watchdog_reset_pending():
     except Exception:
         pass
     return True
+
+
+def mark_ota_config_check_pending():
+    try:
+        with open(OTA_CONFIG_CHECK_MARKER, "w") as handle:
+            handle.write("1\n")
+    except Exception:
+        pass
+
+
+def consume_ota_config_check_pending():
+    try:
+        with open(OTA_CONFIG_CHECK_MARKER, "r"):
+            pass
+    except Exception:
+        return False
+
+    try:
+        os.remove(OTA_CONFIG_CHECK_MARKER)
+    except Exception:
+        pass
+    return True
+
+
+def clear_ota_config_check_pending():
+    try:
+        os.remove(OTA_CONFIG_CHECK_MARKER)
+    except Exception:
+        pass
+
+
+def mark_state_request_pending():
+    try:
+        with open(STATE_REQUEST_MARKER, "w") as handle:
+            handle.write("1\n")
+    except Exception:
+        pass
+
+
+def consume_state_request_pending():
+    try:
+        with open(STATE_REQUEST_MARKER, "r"):
+            pass
+    except Exception:
+        return False
+
+    try:
+        os.remove(STATE_REQUEST_MARKER)
+    except Exception:
+        pass
+    return True
+
+
+def clear_state_request_pending():
+    try:
+        os.remove(STATE_REQUEST_MARKER)
+    except Exception:
+        pass
+
+
+def watchdog_reset_cause():
+    try:
+        reset_cause = machine.reset_cause()
+        wdt_reset = getattr(machine, "WDT_RESET", None)
+        return wdt_reset is not None and reset_cause == wdt_reset
+    except Exception:
+        return False
 
 
 class UsbCommandReader:
@@ -131,6 +200,8 @@ def main():
         else NullResourceMonitor()
     )
     watchdog_reset_boot = consume_watchdog_reset_pending()
+    incomplete_state_request_boot = consume_state_request_pending()
+    watchdog_reset_cause_boot = watchdog_reset_cause()
     telemetry.log(
         "boot",
         device_id=str(getattr(config, "DEVICE_ID", "")),
@@ -151,21 +222,31 @@ def main():
         network_thread_watchdog_seconds=int(
             getattr(config, "NETWORK_THREAD_WATCHDOG_SECONDS", 0)
         ),
+        hardware_watchdog_enabled=bool(getattr(config, "HARDWARE_WATCHDOG_ENABLED", False)),
+        hardware_watchdog_timeout_ms=int(getattr(config, "HARDWARE_WATCHDOG_TIMEOUT_MS", 0)),
         loop_delay_ms=int(getattr(config, "LOOP_DELAY_MS", 0)),
         resource_monitor_enabled=bool(getattr(config, "RESOURCE_MONITOR_ENABLED", False)),
         resource_monitor_sample_seconds=int(getattr(config, "RESOURCE_MONITOR_SAMPLE_SECONDS", 0)),
         watchdog_reset_boot=watchdog_reset_boot,
+        incomplete_state_request_boot=incomplete_state_request_boot,
+        watchdog_reset_cause_boot=watchdog_reset_cause_boot,
     )
     network_reader = NetworkCommandReader(telemetry)
     startup_command = None
     if watchdog_reset_boot:
         telemetry.log("startup_sequence_skip", reason="network_thread_watchdog_reset")
+    elif watchdog_reset_cause_boot:
+        telemetry.log("startup_sequence_skip", reason="hardware_watchdog_reset")
+    elif incomplete_state_request_boot:
+        telemetry.log("startup_sequence_skip", reason="incomplete_state_request")
     else:
         startup_command = run_startup_sequence(strip, status, telemetry, network_reader)
     if startup_command is not None:
         apply_command(strip, status, startup_command, telemetry, "startup_state")
     run_startup_self_test(strip, status, telemetry)
+    network_reader.defer_next_state_poll()
     network = create_network_command_reader(telemetry, network_reader)
+    hardware_watchdog = create_hardware_watchdog(telemetry)
 
     while True:
         loop_started_ms = time.ticks_ms()
@@ -187,6 +268,7 @@ def main():
             time.ticks_diff(time.ticks_ms(), loop_started_ms),
             config.LOOP_DELAY_MS,
         )
+        hardware_watchdog.feed()
         _sleep_ms(config.LOOP_DELAY_MS)
 
 
@@ -283,6 +365,42 @@ def create_network_command_reader(telemetry, reader=None):
         print("Network thread unavailable:", exc)
         telemetry.log("network_thread_error", error=str(exc))
         return reader
+
+
+def create_hardware_watchdog(telemetry):
+    enabled = bool(getattr(config, "HARDWARE_WATCHDOG_ENABLED", False))
+    if not enabled:
+        return NullHardwareWatchdog()
+    if not hasattr(machine, "WDT"):
+        telemetry.log("hardware_watchdog_unavailable")
+        return NullHardwareWatchdog()
+
+    timeout_ms = int(getattr(config, "HARDWARE_WATCHDOG_TIMEOUT_MS", 8000))
+    if timeout_ms < 1000:
+        timeout_ms = 1000
+    if timeout_ms > 8000:
+        timeout_ms = 8000
+
+    try:
+        watchdog = machine.WDT(timeout=timeout_ms)
+        telemetry.log("hardware_watchdog_start", timeout_ms=timeout_ms)
+        return HardwareWatchdog(watchdog)
+    except Exception as exc:
+        telemetry.log("hardware_watchdog_error", error=str(exc), timeout_ms=timeout_ms)
+        return NullHardwareWatchdog()
+
+
+class HardwareWatchdog:
+    def __init__(self, watchdog):
+        self.watchdog = watchdog
+
+    def feed(self):
+        self.watchdog.feed()
+
+
+class NullHardwareWatchdog:
+    def feed(self):
+        pass
 
 
 def state_summary(state):
@@ -485,6 +603,7 @@ class NetworkCommandReader:
         self.last_diagnostic_ms = 0
         self.last_ota_check_request = ""
         self.last_state_response_ms = time.ticks_ms()
+        self.skip_ota_config_once = consume_ota_config_check_pending()
 
         if self.enabled and (connect_wifi_profiles is None or profiles_from_config is None):
             print("Wi-Fi module unavailable; staying in serial mode.")
@@ -508,6 +627,7 @@ class NetworkCommandReader:
             state_enabled=self.state_enabled,
             ota_enabled=self.ota_enabled,
             ota_config_enabled=self.ota_config_enabled,
+            skip_ota_config_once=self.skip_ota_config_once,
             state_poll_seconds=int(getattr(config, "STATE_POLL_SECONDS", 0)),
             ota_check_seconds=int(getattr(config, "OTA_CHECK_SECONDS", 0)),
         )
@@ -521,6 +641,13 @@ class NetworkCommandReader:
 
     def serial_override_active(self):
         return time.ticks_diff(self.serial_pause_until_ms, time.ticks_ms()) > 0
+
+    def defer_next_state_poll(self):
+        if not self.state_enabled:
+            return
+        poll_seconds = int(getattr(config, "STATE_POLL_SECONDS", 5))
+        self.next_poll_ms = time.ticks_add(time.ticks_ms(), poll_seconds * 1000)
+        self.telemetry.log("state_poll_deferred", poll_seconds=poll_seconds)
 
     def _log_poll_diagnostic(self, now, state_due=False, ota_due=False, serial_override=False):
         interval_seconds = int(getattr(config, "NETWORK_DIAGNOSTIC_SECONDS", 30))
@@ -560,12 +687,16 @@ class NetworkCommandReader:
             self._ensure_wifi()
 
             if self.state_enabled:
-                state = fetch_state(
-                    config.STATE_URL,
-                    getattr(config, "DEVICE_TOKEN", ""),
-                    getattr(config, "DEVICE_ID", ""),
-                    getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
-                )
+                mark_state_request_pending()
+                try:
+                    state = fetch_state(
+                        config.STATE_URL,
+                        getattr(config, "DEVICE_TOKEN", ""),
+                        getattr(config, "DEVICE_ID", ""),
+                        getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
+                    )
+                finally:
+                    clear_state_request_pending()
                 self.last_state_response_ms = time.ticks_ms()
                 fetched_ms = time.ticks_diff(time.ticks_ms(), started)
                 state_info = state_summary(state)
@@ -719,6 +850,12 @@ class NetworkCommandReader:
                 return "app:applied"
 
         if self.ota_config_enabled:
+            if self.skip_ota_config_once:
+                self.skip_ota_config_once = False
+                self.telemetry.log("ota_config_check_skip", reason="previous_check_incomplete")
+                statuses.append("config:skipped")
+                return ",".join(statuses)
+
             config_url = str(getattr(config, "OTA_CONFIG_URL", "") or "")
             if not config_url and config_url_from_manifest_url is not None:
                 config_url = config_url_from_manifest_url(getattr(config, "OTA_MANIFEST_URL", ""))
@@ -728,12 +865,16 @@ class NetworkCommandReader:
                 config_url_set=bool(config_url),
                 timeout_seconds=timeout_seconds,
             )
-            status = check_for_config_update(
-                config_url,
-                getattr(config, "OTA_CONFIG_KEY", ""),
-                getattr(config, "OTA_TOKEN", ""),
-                timeout_seconds,
-            )
+            mark_ota_config_check_pending()
+            try:
+                status = check_for_config_update(
+                    config_url,
+                    getattr(config, "OTA_CONFIG_KEY", ""),
+                    getattr(config, "OTA_TOKEN", ""),
+                    timeout_seconds,
+                )
+            finally:
+                clear_ota_config_check_pending()
             self.telemetry.log(
                 "ota_config_check_done",
                 status=status,
@@ -767,12 +908,16 @@ class NetworkCommandReader:
         try:
             self._ensure_wifi()
 
-            state = fetch_state(
-                config.STATE_URL,
-                getattr(config, "DEVICE_TOKEN", ""),
-                getattr(config, "DEVICE_ID", ""),
-                getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
-            )
+            mark_state_request_pending()
+            try:
+                state = fetch_state(
+                    config.STATE_URL,
+                    getattr(config, "DEVICE_TOKEN", ""),
+                    getattr(config, "DEVICE_ID", ""),
+                    getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
+                )
+            finally:
+                clear_state_request_pending()
             self.last_state_response_ms = time.ticks_ms()
             fetched_ms = time.ticks_diff(time.ticks_ms(), started)
             state_info = state_summary(state)

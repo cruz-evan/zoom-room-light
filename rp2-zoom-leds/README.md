@@ -379,6 +379,8 @@ The watchdog is enabled by default:
 ```python
 NETWORK_THREAD_WATCHDOG_ENABLED = True
 NETWORK_THREAD_WATCHDOG_SECONDS = 30
+HARDWARE_WATCHDOG_ENABLED = False
+HARDWARE_WATCHDOG_TIMEOUT_MS = 8000
 ```
 
 When the watchdog trips, telemetry emits `network_thread_watchdog_reset` with
@@ -386,6 +388,13 @@ When the watchdog trips, telemetry emits `network_thread_watchdog_reset` with
 packet to leave, writes a one-shot reset marker, and then calls
 `machine.reset()`. On the next boot, the marker is consumed and the startup
 lighting sequence is skipped once.
+
+The hardware watchdog is opt-in. It starts only after startup network
+confirmation and startup lighting finish, then is fed by the main loop. If the
+watchdog resets the board during a stuck state request, the next boot consumes a
+one-shot marker or reset-cause signal and skips the startup lighting routine.
+On this network path the RP2 watchdog timeout can be too short for slow HTTPS
+requests, so keep it disabled unless forced reboots are acceptable.
 
 ## GitHub OTA Updates
 
@@ -430,7 +439,20 @@ Then deploy over USB once:
 WIFI_SSID="your-wifi-name" WIFI_PASSWORD="your-wifi-password" ./scripts/deploy_device.sh --with-secrets
 ```
 
-After that, normal app changes are wireless:
+After that, normal app changes can be deployed wirelessly only when OTA is
+explicitly enabled in `device/secrets.py`:
+
+```python
+OTA_ENABLED = True
+```
+
+When OTA is disabled, use USB deployment for app updates:
+
+```bash
+./scripts/deploy_device.sh
+```
+
+With app OTA enabled:
 
 1. Edit non-secret files in `device/`.
 2. Commit and push to `main`.
@@ -438,9 +460,20 @@ After that, normal app changes are wireless:
    with GitHub Pages.
 4. The Pico checks `OTA_MANIFEST_URL` every `OTA_CHECK_SECONDS` seconds
    (default: 60), downloads changed files, verifies SHA-256 and size, commits
-   the update, then resets. On the same cadence it also checks
-   `wifi-config.json`, decrypts it with `OTA_CONFIG_KEY`, writes
-   `wifi_profiles.json` when changed, and resets.
+   the update, then resets.
+
+All OTA is disabled by default while USB is the recovery/update path. Encrypted
+Wi-Fi config OTA has a separate opt-in flag; re-enable it only after USB
+recovery is available and the watchdog behavior has been validated:
+
+```python
+OTA_CONFIG_ENABLED = True
+```
+
+When enabled, the Pico checks `wifi-config.json`, decrypts it with
+`OTA_CONFIG_KEY`, writes `wifi_profiles.json` when changed, and resets. If the
+hardware watchdog resets the board during an OTA config check, the next boot
+skips OTA config once before trying again on a later interval.
 
 ## Encrypted Wi-Fi Config OTA
 

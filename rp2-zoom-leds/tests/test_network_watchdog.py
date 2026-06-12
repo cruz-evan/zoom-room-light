@@ -205,3 +205,27 @@ def test_watchdog_reset_marker_is_consumed_once(monkeypatch, tmp_path):
     assert module.consume_watchdog_reset_pending() is True
     assert module.consume_watchdog_reset_pending() is False
     assert not (tmp_path / module.WATCHDOG_RESET_MARKER).exists()
+
+
+def test_ota_config_marker_is_consumed_once(monkeypatch, tmp_path):
+    module = load_device_main(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    module.mark_ota_config_check_pending()
+
+    assert (tmp_path / module.OTA_CONFIG_CHECK_MARKER).read_text(encoding="utf-8") == "1\n"
+    assert module.consume_ota_config_check_pending() is True
+    assert module.consume_ota_config_check_pending() is False
+    assert not (tmp_path / module.OTA_CONFIG_CHECK_MARKER).exists()
+
+
+def test_state_request_marker_is_consumed_once(monkeypatch, tmp_path):
+    module = load_device_main(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    module.mark_state_request_pending()
+
+    assert (tmp_path / module.STATE_REQUEST_MARKER).read_text(encoding="utf-8") == "1\n"
+    assert module.consume_state_request_pending() is True
+    assert module.consume_state_request_pending() is False
+    assert not (tmp_path / module.STATE_REQUEST_MARKER).exists()

@@ -63,6 +63,15 @@ def _secret_int(name, default):
         return int(default)
 
 
+def _secret_bool(name, default=False):
+    value = _secret(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def _unique_id_hex():
     try:
         import machine
@@ -130,11 +139,20 @@ OTA_TOKEN = _secret("OTA_TOKEN")
 OTA_CONFIG_URL = _secret("OTA_CONFIG_URL")
 OTA_CONFIG_KEY = _secret("OTA_CONFIG_KEY")
 
-NETWORK_ENABLED = bool(WIFI_SSID and (STATE_URL or OTA_MANIFEST_URL or OTA_CONFIG_URL))
+OTA_ENABLED = bool(_secret_bool("OTA_ENABLED", False) and WIFI_SSID and OTA_MANIFEST_URL)
+OTA_CONFIG_ENABLED = bool(
+    _secret_bool("OTA_CONFIG_ENABLED", False)
+    and WIFI_SSID
+    and OTA_CONFIG_KEY
+    and (OTA_CONFIG_URL or OTA_MANIFEST_URL)
+)
+NETWORK_ENABLED = bool(WIFI_SSID and (STATE_URL or OTA_ENABLED or OTA_CONFIG_ENABLED))
 NETWORK_THREAD_ENABLED = True
 NETWORK_THREAD_IDLE_MS = 20
 NETWORK_THREAD_WATCHDOG_ENABLED = True
 NETWORK_THREAD_WATCHDOG_SECONDS = 30
+HARDWARE_WATCHDOG_ENABLED = bool(_secret_bool("HARDWARE_WATCHDOG_ENABLED", False))
+HARDWARE_WATCHDOG_TIMEOUT_MS = 8000
 NETWORK_DIAGNOSTIC_SECONDS = 30
 WIFI_CONNECT_TIMEOUT_SECONDS = 20
 STATE_POLL_SECONDS = 5
@@ -144,8 +162,6 @@ STATE_REAPPLY_SECONDS = 60
 SERIAL_OVERRIDE_SECONDS = 10
 NETWORK_ERROR_AFTER_FAILURES = 3
 NETWORK_ERROR_COMMAND = {"mode": "pulse", "rgb": [120, 0, 255], "speed": 0.45}
-OTA_ENABLED = bool(WIFI_SSID and OTA_MANIFEST_URL)
-OTA_CONFIG_ENABLED = bool(WIFI_SSID and OTA_CONFIG_KEY and (OTA_CONFIG_URL or OTA_MANIFEST_URL))
 OTA_INITIAL_DELAY_SECONDS = 20
 OTA_CHECK_SECONDS = 60
 OTA_ERROR_RETRY_SECONDS = 60

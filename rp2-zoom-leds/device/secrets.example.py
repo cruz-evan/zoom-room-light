@@ -48,12 +48,17 @@ DEVICE_TOKEN = ""
 # OTA endpoint that expects the same low-privilege bearer style as /device/state.
 OTA_MANIFEST_URL = "https://YOUR_GITHUB_USER.github.io/YOUR_REPO/manifest.json"
 OTA_TOKEN = ""
+# Disabled by default while USB is the recovery/update path.
+OTA_ENABLED = False
 
 # Shared key used to decrypt encrypted Wi-Fi config published to GitHub Pages.
 # Generate a long random value, store the same value as GitHub secret
 # OTA_CONFIG_KEY, and provision it once over USB. Do not publish this key.
 OTA_CONFIG_KEY = ""
 OTA_CONFIG_URL = ""
+# Disabled by default because a stuck OTA config request can wedge the device.
+# Re-enable only with the hardware watchdog and skip marker behavior deployed.
+OTA_CONFIG_ENABLED = False
 
 # Optional on-device telemetry over UDP. The Pico can be powered from the wall
 # and still stream compact JSON logs over Wi-Fi to a laptop listener.
@@ -82,3 +87,5 @@ RESOURCE_MONITOR_INCLUDE_TEMP = True
 # This recovers from stuck Wi-Fi/HTTP/OTA calls without physically power-cycling.
 NETWORK_THREAD_WATCHDOG_ENABLED = True
 NETWORK_THREAD_WATCHDOG_SECONDS = 30
+HARDWARE_WATCHDOG_ENABLED = False
+HARDWARE_WATCHDOG_TIMEOUT_MS = 8000
