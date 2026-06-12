@@ -695,7 +695,7 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "meeting.ended");
   });
 
-  it("keeps active state during the scheduled end grace window", () => {
+  it("keeps Zoom-origin active state during the scheduled end grace window", () => {
     const now = Date.parse("2026-06-04T20:31:00Z");
     const current = {
       v: 1,
@@ -706,7 +706,7 @@ describe("Cloudflare Worker relay", () => {
       active_meeting_start_at: "2026-06-04T20:00:00.000Z",
       active_meeting_end_at: "2026-06-04T20:30:00.000Z",
       last_event: "schedule.ending_soon",
-      source: "schedule",
+      source: "zoom",
       zoom_event_ts: now - 31 * 60000,
       meeting: { id: "missed-ended", topic: "Demo" },
     };
@@ -729,7 +729,45 @@ describe("Cloudflare Worker relay", () => {
     assert.equal(state.last_event, "schedule.ending_soon");
   });
 
-  it("clears active state after the scheduled end grace window", () => {
+  it("clears schedule-origin active state at the scheduled end without grace", () => {
+    const now = Date.parse("2026-06-04T20:31:00Z");
+    const current = {
+      v: 1,
+      command: { mode: "meeting_status", state: "ending_soon", minutes: 1 },
+      in_use: true,
+      active_meeting_id: "schedule-ended",
+      active_topic: "Demo",
+      active_meeting_start_at: "2026-06-04T20:00:00.000Z",
+      active_meeting_end_at: "2026-06-04T20:30:00.000Z",
+      last_event: "schedule.ending_soon",
+      source: "schedule",
+      zoom_event_ts: 0,
+      meeting: { id: "schedule-ended", topic: "Demo" },
+    };
+    const schedule = testInternals.scheduleStatusFromMeetings(
+      [
+        {
+          id: "schedule-ended",
+          topic: "Demo",
+          start_time: "2026-06-04T20:00:00Z",
+          duration: 30,
+        },
+      ],
+      current,
+      env({ ENDING_SOON_MINUTES: "5", SCHEDULE_END_CLEAR_GRACE_MINUTES: "5" }),
+      now,
+    );
+    const state = testInternals.stateFromScheduleStatus(
+      schedule,
+      current,
+      env({ SCHEDULE_END_CLEAR_GRACE_MINUTES: "5" }),
+    );
+
+    assert.deepEqual(state.command, { mode: "off" });
+    assert.equal(state.last_event, "schedule.end_clear");
+  });
+
+  it("clears Zoom-origin active state after the scheduled end grace window", () => {
     const now = Date.parse("2026-06-04T20:36:00Z");
     const current = {
       v: 1,
@@ -740,7 +778,7 @@ describe("Cloudflare Worker relay", () => {
       active_meeting_start_at: "2026-06-04T20:00:00.000Z",
       active_meeting_end_at: "2026-06-04T20:30:00.000Z",
       last_event: "schedule.ending_soon",
-      source: "schedule",
+      source: "zoom",
       zoom_event_ts: now - 36 * 60000,
       meeting: { id: "missed-ended", topic: "Demo" },
     };

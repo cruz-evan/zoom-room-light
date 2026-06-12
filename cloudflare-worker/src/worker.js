@@ -641,7 +641,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
     if (shouldClearAfterScheduledEnd(currentState, schedule, env, nowMs)) {
       return makeStoredState({
         command: { mode: "off" },
-        lastEvent: "schedule.end_grace_clear",
+        lastEvent: usesScheduledEndClearGrace(currentState) ? "schedule.end_grace_clear" : "schedule.end_clear",
         updatedAt: now,
         meeting: scheduledActiveMeeting,
         source: "schedule",
@@ -1222,7 +1222,15 @@ function shouldClearAfterScheduledEnd(currentState, schedule, env, nowMs) {
   if (end === null) {
     return false;
   }
-  return nowMs >= end.getTime() + scheduleEndClearGraceMinutes(env) * 60000;
+  return nowMs >= end.getTime() + scheduledEndClearGraceMs(currentState, env);
+}
+
+function scheduledEndClearGraceMs(currentState, env) {
+  return usesScheduledEndClearGrace(currentState) ? scheduleEndClearGraceMinutes(env) * 60000 : 0;
+}
+
+function usesScheduledEndClearGrace(currentState) {
+  return String(currentState.source || "") === "zoom";
 }
 
 function scheduleOnlyMeetingInProgress(currentState, nowMs) {
