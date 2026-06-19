@@ -242,6 +242,7 @@ For production polling, set the Pico's `STATE_URL` to the Worker endpoint:
 ```python
 STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
 DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
+OTA_MANIFEST_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/ota/manifest.json"
 ```
 
 Deploy app files over USB while preserving board-local secrets:
@@ -261,10 +262,11 @@ secrets named `WIFI_SSID` and `WIFI_PASSWORD` the same way when run on a
 self-hosted runner connected to the Pico. Set repository variable `STATE_URL`
 or `OTA_MANIFEST_URL` before running it.
 
-For Wi-Fi password rotation over public GitHub Pages, add repository secret
-`OTA_CONFIG_KEY` and provision the same value to each Pico once over USB. The
-`Pico W OTA` workflow then publishes encrypted `wifi-config.json`; the Pages
-artifact does not contain plaintext Wi-Fi credentials.
+For Wi-Fi password rotation, add repository secret `OTA_CONFIG_KEY` and
+provision the same value to each Pico once over USB. The `Pico W OTA` workflow
+then publishes encrypted `wifi-config.json` to GitHub Pages, and the Worker
+serves it to the Pico through `/ota/wifi-config.json`; the Pages artifact does
+not contain plaintext Wi-Fi credentials.
 
 ## Verification
 

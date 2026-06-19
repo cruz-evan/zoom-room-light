@@ -417,18 +417,20 @@ First-time OTA provisioning still needs USB because the board must already have
 cp device/secrets.example.py device/secrets.py
 ```
 
-Set the relay fields and the GitHub Pages manifest URL in `device/secrets.py`:
+Set the relay fields and the Cloudflare OTA proxy manifest URL in
+`device/secrets.py`:
 
 ```python
 STATE_URL = "http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/device/state"
 DEVICE_TOKEN = ""
-OTA_MANIFEST_URL = "https://cruz-evan.github.io/zoom-room-light/manifest.json"
+OTA_MANIFEST_URL = "http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/ota/manifest.json"
 OTA_TOKEN = ""
 OTA_CONFIG_KEY = "long-random-shared-key"
 ```
 
-Leave `OTA_TOKEN` blank when using public GitHub Pages. Only set it if you route
-OTA through a protected endpoint that expects a low-privilege bearer token.
+Leave `OTA_TOKEN` blank when using the public Cloudflare OTA proxy. Only set it
+if you route OTA through a protected endpoint that expects a low-privilege
+bearer token.
 `OTA_CONFIG_KEY` is different: it is a local decryption key for encrypted Wi-Fi
 config. Generate it once, store the same value as the GitHub repository secret
 `OTA_CONFIG_KEY`, and provision it to each board over USB.
@@ -556,7 +558,13 @@ https://cruz-evan.github.io/zoom-room-light
 ```
 
 The repository variable `OTA_BASE_URL` should be set to that public base URL.
-The Pico's `OTA_MANIFEST_URL` should be that base URL plus `/manifest.json`.
+The Cloudflare Worker `OTA_UPSTREAM_BASE_URL` should also point at that public
+base URL. The Pico's `OTA_MANIFEST_URL` should point at the plain-HTTP Worker
+proxy:
+
+```text
+http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/ota/manifest.json
+```
 
 Build the OTA site locally without publishing:
 

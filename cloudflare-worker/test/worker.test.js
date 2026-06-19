@@ -102,6 +102,108 @@ describe("Cloudflare Worker relay", () => {
     assert.deepEqual(body.command, { mode: "off" });
   });
 
+  it("proxies OTA manifest and rewrites firmware URLs to the request origin", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+    globalThis.fetch = async (url) => {
+      requestedUrls.push(String(url));
+      assert.equal(String(url), "https://pages.test/zoom-room-light/manifest.json");
+      return new Response(
+        JSON.stringify({
+          schema: 1,
+          version: "abc123",
+          files: [
+            {
+              path: "main.py",
+              size: 12,
+              sha256: "a".repeat(64),
+              url: "https://pages.test/zoom-room-light/firmware/abc123/main.py",
+            },
+          ],
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    };
+
+    try {
+      const response = await worker.fetch(
+        new Request("http://relay.test/ota/manifest.json"),
+        env({ OTA_UPSTREAM_BASE_URL: "https://pages.test/zoom-room-light" }),
+      );
+
+      assert.equal(response.status, 200);
+      const body = await json(response);
+      assert.deepEqual(requestedUrls, ["https://pages.test/zoom-room-light/manifest.json"]);
+      assert.equal(body.files[0].url, "http://relay.test/ota/firmware/abc123/main.py");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("proxies OTA firmware files from the configured upstream", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      assert.equal(String(url), "https://pages.test/zoom-room-light/firmware/abc123/main.py");
+      return new Response("print('ota')\n", {
+        headers: { "Content-Type": "text/x-python" },
+      });
+    };
+
+    try {
+      const response = await worker.fetch(
+        new Request("http://relay.test/ota/firmware/abc123/main.py"),
+        env({ OTA_UPSTREAM_BASE_URL: "https://pages.test/zoom-room-light" }),
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("Content-Type"), "text/x-python");
+      assert.equal(await response.text(), "print('ota')\n");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("proxies optional OTA Wi-Fi config from the configured upstream", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      assert.equal(String(url), "https://pages.test/zoom-room-light/wifi-config.json");
+      return new Response('{"nonce":"abc"}', {
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    try {
+      const response = await worker.fetch(
+        new Request("http://relay.test/ota/wifi-config.json"),
+        env({ OTA_UPSTREAM_BASE_URL: "https://pages.test/zoom-room-light" }),
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), '{"nonce":"abc"}');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("preserves upstream 404s for missing optional OTA Wi-Fi config", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      assert.equal(String(url), "https://pages.test/zoom-room-light/wifi-config.json");
+      return new Response("not found", { status: 404 });
+    };
+
+    try {
+      const response = await worker.fetch(
+        new Request("http://relay.test/ota/wifi-config.json"),
+        env({ OTA_UPSTREAM_BASE_URL: "https://pages.test/zoom-room-light" }),
+      );
+
+      assert.equal(response.status, 404);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("answers Zoom url validation with the expected encrypted token", async () => {
     const response = await worker.fetch(
       new Request("https://relay.test/zoom/webhook", {

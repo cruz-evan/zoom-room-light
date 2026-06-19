@@ -10,6 +10,7 @@ const DEFAULT_SCHEDULE_END_CLEAR_GRACE_MINUTES = 5;
 const DEFAULT_CALENDAR_LOOKBACK_MINUTES = 720;
 const DEFAULT_CALENDAR_LOOKAHEAD_MINUTES = 240;
 const MICROSOFT_GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+const DEFAULT_OTA_UPSTREAM_BASE_URL = "https://cruz-evan.github.io/zoom-room-light";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -39,6 +40,10 @@ export async function handleRequest(request, env, ctx) {
 
   if (request.method === "GET" && path === "/health") {
     return jsonResponse({ ok: true });
+  }
+
+  if (request.method === "GET" && path.startsWith("/ota/")) {
+    return handleOtaProxy(request, env, url, path);
   }
 
   const deviceId = deviceIdFromRequest(request, url, path);
@@ -78,6 +83,126 @@ export async function handleRequest(request, env, ctx) {
   }
 
   return jsonResponse({ error: "not_found" }, 404);
+}
+
+async function handleOtaProxy(request, env, requestUrl, path) {
+  const upstreamBase = otaUpstreamBaseUrl(env);
+  const upstreamPath = otaUpstreamPath(path);
+  if (!upstreamPath) {
+    return jsonResponse({ error: "not_found" }, 404);
+  }
+
+  const upstreamUrl = new URL(upstreamBase + upstreamPath + requestUrl.search);
+  const upstreamResponse = await fetch(upstreamUrl.toString(), {
+    headers: otaUpstreamHeaders(request, env),
+  });
+
+  if (!upstreamResponse.ok) {
+    logRelayEvent("ota_proxy_upstream_error", {
+      upstream_url: upstreamUrl.toString(),
+      status: upstreamResponse.status,
+    });
+    return jsonResponse(
+      { error: "ota_upstream_error", status: upstreamResponse.status },
+      upstreamResponse.status,
+    );
+  }
+
+  if (upstreamPath === "/manifest.json") {
+    const manifest = await upstreamResponse.json();
+    return jsonResponse(rewriteOtaManifest(manifest, upstreamBase, otaProxyBaseUrl(requestUrl)));
+  }
+
+  return new Response(upstreamResponse.body, {
+    status: 200,
+    headers: otaProxyHeaders(upstreamResponse),
+  });
+}
+
+function otaUpstreamBaseUrl(env) {
+  return String(env.OTA_UPSTREAM_BASE_URL || DEFAULT_OTA_UPSTREAM_BASE_URL).replace(/\/+$/, "");
+}
+
+function otaUpstreamPath(path) {
+  const relative = path.slice("/ota".length) || "/";
+  if (relative === "/manifest.json" || relative === "/wifi-config.json") {
+    return relative;
+  }
+  if (relative.startsWith("/firmware/") && relative.endsWith(".py")) {
+    return relative;
+  }
+  return "";
+}
+
+function otaUpstreamHeaders(request, env) {
+  const headers = {};
+  const token = String(env.OTA_UPSTREAM_TOKEN || "");
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const accept = request.headers.get("accept");
+  if (accept) {
+    headers.Accept = accept;
+  }
+  return headers;
+}
+
+function rewriteOtaManifest(manifest, upstreamBase, proxyBase) {
+  if (!isObject(manifest) || !Array.isArray(manifest.files)) {
+    return manifest;
+  }
+
+  return {
+    ...manifest,
+    files: manifest.files.map((file) => {
+      if (!isObject(file) || !file.url) {
+        return file;
+      }
+      return {
+        ...file,
+        url: rewriteOtaFileUrl(file.url, upstreamBase, proxyBase),
+      };
+    }),
+  };
+}
+
+function rewriteOtaFileUrl(value, upstreamBase, proxyBase) {
+  try {
+    const upstream = new URL(upstreamBase);
+    const target = new URL(String(value), upstreamBase + "/");
+    const upstreamPathPrefix = upstream.pathname.replace(/\/+$/, "");
+    let relative = target.pathname;
+
+    if (upstreamPathPrefix && relative.startsWith(upstreamPathPrefix + "/")) {
+      relative = relative.slice(upstreamPathPrefix.length);
+    }
+    if (relative.startsWith("/ota/firmware/")) {
+      relative = relative.slice("/ota".length);
+    }
+    if (!relative.startsWith("/firmware/")) {
+      return String(value);
+    }
+
+    return `${proxyBase}${relative}${target.search}`;
+  } catch {
+    return String(value);
+  }
+}
+
+function otaProxyBaseUrl(requestUrl) {
+  return `${requestUrl.protocol}//${requestUrl.host}/ota`;
+}
+
+function otaProxyHeaders(upstreamResponse) {
+  const headers = new Headers();
+  headers.set("Cache-Control", "no-store");
+  const contentType = upstreamResponse.headers.get("content-type");
+  if (contentType) {
+    headers.set("Content-Type", contentType);
+  } else {
+    headers.set("Content-Type", "application/octet-stream");
+  }
+  return headers;
 }
 
 async function handleZoomWebhook(request, env, ctx, deviceId = "") {

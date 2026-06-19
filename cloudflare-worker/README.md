@@ -8,6 +8,7 @@ Current deployment:
 
 ```text
 https://zoom-led-room-light.connor-zoom-led-room-light.workers.dev
+http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev
 ```
 
 ## Routes
@@ -15,6 +16,9 @@ https://zoom-led-room-light.connor-zoom-led-room-light.workers.dev
 ```text
 POST /zoom/webhook       Zoom webhook receiver
 GET  /device/state       Pico polling endpoint
+GET  /ota/manifest.json  Pico OTA manifest proxy
+GET  /ota/firmware/...   Pico OTA firmware file proxy
+GET  /ota/wifi-config.json optional encrypted Wi-Fi config proxy
 GET  /health             basic health check
 POST /schedule/check     protected immediate schedule poll
 GET  /simulate/start     protected demo state: in_progress
@@ -77,6 +81,15 @@ npx wrangler secret put ADMIN_TOKEN
 
 `ADMIN_TOKEN` protects the simulate endpoints and `/schedule/check`. If it is
 unset, those routes are disabled.
+
+`OTA_UPSTREAM_BASE_URL` is a non-secret Worker variable for the GitHub Pages OTA
+site. The Pico should use the Worker URL over plain HTTP; the Worker fetches
+from GitHub Pages over HTTPS and rewrites manifest firmware URLs back through
+`/ota/firmware/...`.
+
+```text
+OTA_UPSTREAM_BASE_URL=https://cruz-evan.github.io/zoom-room-light
+```
 
 If the Zoom app receives org-wide meeting webhooks, set per-device topic filters
 with `ZOOM_WEBHOOK_TOPIC_FILTERS` and identify the target device in the webhook
@@ -213,6 +226,8 @@ In `/Users/connor/Documents/Hackathon/rp2-zoom-leds/device/secrets.py`, set:
 ```python
 STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
 DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
+OTA_MANIFEST_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/ota/manifest.json"
+OTA_TOKEN = ""
 ```
 
 Then redeploy:

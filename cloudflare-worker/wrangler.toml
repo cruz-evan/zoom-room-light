@@ -15,6 +15,7 @@ preview_id = "97f844ce12684d928f33c5720c48ed16"
 
 [vars]
 POLL_SECONDS = "5"
+OTA_UPSTREAM_BASE_URL = "https://cruz-evan.github.io/zoom-room-light"
 ZOOM_WEBHOOK_TOPIC_FILTER = "Cronometer Board Room's Personal Meeting Room"
 ACTIVE_MEETING_LOOKAHEAD_MINUTES = "5"
 EMPTY_ROOM_LOOKAHEAD_MINUTES = "15"
