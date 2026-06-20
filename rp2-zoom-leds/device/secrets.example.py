@@ -1,6 +1,17 @@
 WIFI_SSID = "your-wifi-name"
 WIFI_PASSWORD = "your-wifi-password"
 
+# Optional bootstrap fallback profiles. Saved encrypted OTA profiles are tried
+# first, then these secrets.py bootstrap profiles are tried in this order.
+OFFICE_WIFI_SSID = ""
+OFFICE_WIFI_PASSWORD = ""
+WIFI_FALLBACK_SSID = ""
+WIFI_FALLBACK_PASSWORD = ""
+FALLBACK_PHONE_HOTSPOT_WIFI_SSID = ""
+FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD = ""
+PHONE_HOTSPOT_SSID = ""
+PHONE_HOTSPOT_PASSWORD = ""
+
 # Stable board identity. Keep this stable even if the board's IP changes. Use
 # "auto" to derive pico-<machine.unique_id>, or set a room name once assigned.
 DEVICE_ID = "auto"

@@ -78,6 +78,14 @@ render_secrets_from_env() {
   local env_names=(
     WIFI_SSID
     WIFI_PASSWORD
+    OFFICE_WIFI_SSID
+    OFFICE_WIFI_PASSWORD
+    WIFI_FALLBACK_SSID
+    WIFI_FALLBACK_PASSWORD
+    FALLBACK_PHONE_HOTSPOT_WIFI_SSID
+    FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD
+    PHONE_HOTSPOT_SSID
+    PHONE_HOTSPOT_PASSWORD
     DEVICE_ID
     ROOM_ID
     DEVICE_HOSTNAME
@@ -86,8 +94,10 @@ render_secrets_from_env() {
     DEVICE_TOKEN
     OTA_MANIFEST_URL
     OTA_TOKEN
+    OTA_ENABLED
     OTA_CONFIG_URL
     OTA_CONFIG_KEY
+    OTA_CONFIG_ENABLED
   )
 
   if env_is_set_and_nonempty WIFI_SSID || env_is_set_and_nonempty WIFI_PASSWORD; then

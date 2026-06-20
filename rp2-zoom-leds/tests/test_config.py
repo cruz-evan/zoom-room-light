@@ -174,3 +174,17 @@ def test_ota_config_can_be_explicitly_enabled():
     )
 
     assert config.OTA_CONFIG_ENABLED is True
+
+
+def test_wifi_fallback_secret_names_are_exposed():
+    config = load_config_with_secrets(
+        WIFI_FALLBACK_SSID="fallback",
+        WIFI_FALLBACK_PASSWORD="fallback-secret",
+        PHONE_HOTSPOT_SSID="phone",
+        PHONE_HOTSPOT_PASSWORD="phone-secret",
+    )
+
+    assert config.WIFI_FALLBACK_SSID == "fallback"
+    assert config.WIFI_FALLBACK_PASSWORD == "fallback-secret"
+    assert config.PHONE_HOTSPOT_SSID == "phone"
+    assert config.PHONE_HOTSPOT_PASSWORD == "phone-secret"

@@ -517,8 +517,23 @@ FALLBACK_PHONE_HOTSPOT_WIFI_SSID
 FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD
 ```
 
-The Pico tries saved encrypted OTA profiles first, in workflow order, then
-falls back to the bootstrap `WIFI_SSID` and `WIFI_PASSWORD` in `secrets.py`.
+The Pico tries saved encrypted OTA profiles first, in workflow order. It then
+falls back to bootstrap profiles stored directly in `secrets.py`, in the same
+order:
+
+```python
+OFFICE_WIFI_SSID = ""
+OFFICE_WIFI_PASSWORD = ""
+WIFI_SSID = "office-wifi"
+WIFI_PASSWORD = "office-password"
+WIFI_FALLBACK_SSID = ""
+WIFI_FALLBACK_PASSWORD = ""
+FALLBACK_PHONE_HOTSPOT_WIFI_SSID = ""
+FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD = ""
+PHONE_HOTSPOT_SSID = "phone-hotspot"
+PHONE_HOTSPOT_PASSWORD = "phone-hotspot-password"
+```
+
 Changing a GitHub secret does not automatically start a workflow. After changing
 a Wi-Fi secret, manually run `Pico W OTA`; the config payload version includes
 the workflow run ID so a rerun publishes a new encrypted payload even when app
