@@ -50,6 +50,29 @@ class FakeMachine:
         raise RuntimeError("reset called")
 
 
+class FakeStdin:
+    def __init__(self, chars):
+        self.chars = list(chars)
+
+    def read(self, count):
+        if not self.chars:
+            return ""
+        return self.chars.pop(0)
+
+
+class FakePoller:
+    def __init__(self, stdin):
+        self.stdin = stdin
+
+    def register(self, stream, flags):
+        pass
+
+    def poll(self, timeout):
+        if self.stdin.chars:
+            return [(None, None)]
+        return []
+
+
 def load_device_main(monkeypatch):
     device_dir = Path(__file__).resolve().parents[1] / "device"
     monkeypatch.syspath_prepend(str(device_dir))
@@ -92,6 +115,18 @@ def load_device_main(monkeypatch):
     return module
 
 
+def make_usb_reader(module, monkeypatch, chars):
+    stdin = FakeStdin(chars)
+    poller = FakePoller(stdin)
+    monkeypatch.setattr(module.sys, "stdin", stdin)
+    monkeypatch.setattr(
+        module,
+        "select",
+        types.SimpleNamespace(POLLIN=1, poll=lambda: poller),
+    )
+    return module.UsbCommandReader()
+
+
 def make_threaded_reader(module, now=0, last_heartbeat_ms=0, last_state_response_ms=0):
     threaded = object.__new__(module.ThreadedNetworkCommandReader)
     threaded.reader = FakeReader()
@@ -105,6 +140,28 @@ def make_threaded_reader(module, now=0, last_heartbeat_ms=0, last_state_response
     threaded.resetting = False
     module.time = FakeTime(now)
     return threaded
+
+
+def test_usb_reader_raises_keyboard_interrupt_for_ctrl_c(monkeypatch):
+    module = load_device_main(monkeypatch)
+    reader = make_usb_reader(module, monkeypatch, "\x03")
+
+    try:
+        reader.poll()
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("Ctrl-C should escape the USB command reader")
+
+    assert reader.buffer == ""
+
+
+def test_usb_reader_still_parses_json_line_commands(monkeypatch):
+    module = load_device_main(monkeypatch)
+    monkeypatch.setattr(module, "try_parse_line", lambda line: {"line": line})
+    reader = make_usb_reader(module, monkeypatch, '{"mode":"off"}\n')
+
+    assert reader.poll() == {"line": '{"mode":"off"}'}
 
 
 def test_network_thread_watchdog_allows_fresh_heartbeat(monkeypatch):

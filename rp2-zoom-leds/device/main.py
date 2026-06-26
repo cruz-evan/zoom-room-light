@@ -170,6 +170,9 @@ class UsbCommandReader:
             if isinstance(char, bytes):
                 char = char.decode("utf-8")
 
+            if char == "\x03":
+                self.buffer = ""
+                raise KeyboardInterrupt
             if char == "\n":
                 line = self.buffer.strip()
                 self.buffer = ""

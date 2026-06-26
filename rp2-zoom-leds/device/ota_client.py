@@ -27,6 +27,11 @@ import gc
 import machine
 import time
 
+try:
+    import build_info
+except ImportError:
+    build_info = None
+
 
 STATE_FILE = "ota_state.json"
 EXCLUDED_PATHS = ("secrets.py", "secrets.example.py")
@@ -39,6 +44,7 @@ class OtaError(RuntimeError):
 def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_seconds=8):
     manifest = _fetch_json(manifest_url, token, timeout_seconds)
     version = str(manifest.get("version") or "")
+    manifest_build_epoch = _manifest_build_epoch(manifest)
     files = _manifest_files(manifest)
 
     if not version:
@@ -50,13 +56,23 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
             pending.append(file_info)
 
     if not pending:
-        _write_state(version, files)
+        _write_state(version, manifest_build_epoch, files)
         return "current"
+
+    installed_build_epoch = _installed_build_epoch()
+    if manifest_build_epoch <= installed_build_epoch:
+        print(
+            "OTA manifest is not newer; skipping:",
+            manifest_build_epoch,
+            "<=",
+            installed_build_epoch,
+        )
+        return "stale"
 
     print("OTA update available:", version)
     _download_pending(pending, token, max_file_bytes, timeout_seconds)
     _commit_downloads(pending)
-    _write_state(version, files)
+    _write_state(version, manifest_build_epoch, files)
     print("OTA update applied; resetting")
     time.sleep_ms(250)
     machine.reset()
@@ -142,6 +158,22 @@ def _manifest_files(manifest):
         files.append({"path": path, "sha256": sha256, "url": url, "size": size})
 
     return files
+
+
+def _manifest_build_epoch(manifest):
+    epoch = _as_int(manifest.get("build_epoch_utc"), 0)
+    if epoch < 0:
+        raise OtaError("manifest has invalid build timestamp")
+    return epoch
+
+
+def _installed_build_epoch():
+    if build_info is None:
+        return 0
+    epoch = _as_int(getattr(build_info, "BUILD_EPOCH_UTC", 0), 0)
+    if epoch < 0:
+        return 0
+    return epoch
 
 
 def _validated_path(path):
@@ -239,9 +271,10 @@ def _restore_backups(committed):
             os.rename(_backup_name(path), path)
 
 
-def _write_state(version, files):
+def _write_state(version, build_epoch_utc, files):
     state = {
         "version": version,
+        "build_epoch_utc": build_epoch_utc,
         "files": [{"path": item["path"], "sha256": item["sha256"]} for item in files],
     }
     with open(STATE_FILE, "w") as handle:

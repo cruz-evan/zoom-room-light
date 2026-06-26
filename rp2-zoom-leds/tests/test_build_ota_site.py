@@ -31,10 +31,11 @@ def test_build_ota_site_excludes_secret_files(tmp_path):
         output_dir=output_dir,
         base_url="https://example.com/ota/",
         version="abc123",
+        build_epoch_utc=1800000000,
     )
 
     paths = [item["path"] for item in manifest["files"]]
-    assert paths == ["led_strip.py", "main.py"]
+    assert paths == ["build_info.py", "led_strip.py", "main.py"]
     assert not (output_dir / "firmware" / "abc123" / "secrets.py").exists()
     assert not (output_dir / "firmware" / "abc123" / "secrets.example.py").exists()
 
@@ -53,9 +54,11 @@ def test_build_ota_site_writes_hashes_and_urls(tmp_path):
         output_dir=output_dir,
         base_url="https://example.com/rp2-zoom-leds",
         version="feature/test build",
+        build_epoch_utc=1800000000,
     )
 
-    file_info = manifest["files"][0]
+    files_by_path = {item["path"]: item for item in manifest["files"]}
+    file_info = files_by_path["main.py"]
     assert file_info == {
         "path": "main.py",
         "size": len(main_data),
@@ -65,5 +68,14 @@ def test_build_ota_site_writes_hashes_and_urls(tmp_path):
 
     written_manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     assert written_manifest["version"] == "feature/test build"
+    assert written_manifest["build_epoch_utc"] == 1800000000
+    assert written_manifest["build_id_utc"] == "2027-01-15T08:00:00Z"
     assert written_manifest["files"] == manifest["files"]
     assert (output_dir / "firmware" / "feature-test-build" / "main.py").read_bytes() == main_data
+
+    build_info_data = (output_dir / "firmware" / "feature-test-build" / "build_info.py").read_text(
+        encoding="utf-8"
+    )
+    assert "BUILD_EPOCH_UTC = 1800000000" in build_info_data
+    assert "BUILD_ID_UTC = '2027-01-15T08:00:00Z'" in build_info_data
+    assert "BUILD_VERSION = 'feature/test build'" in build_info_data

@@ -84,7 +84,7 @@ OTA_CONFIG_ENABLED = False
 TELEMETRY_ENABLED = False
 TELEMETRY_HOST = "255.255.255.255"
 TELEMETRY_PORT = 9977
-TELEMETRY_DEVICE_ID = DEVICE_ID
+# Omit TELEMETRY_DEVICE_ID to use the resolved DEVICE_ID.
 
 # Optional resource monitor sent over the same telemetry UDP channel. It emits
 # resource_sample events with heap free bytes, loop timing, estimated CPU busy
