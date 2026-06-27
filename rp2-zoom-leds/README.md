@@ -96,6 +96,12 @@ List available sequences:
 python3 scripts/emulate_pico.py --list-sequences
 ```
 
+Accelerate through the 15-minute starting-soon countdown blend:
+
+```bash
+python3 scripts/emulate_pico.py --sequence starting-soon-countdown
+```
+
 Use `--json` when wiring the emulator into scripts or CI. The model is
 conservative rather than cycle-accurate; keep real-board smoke tests for final
 Wi-Fi, MicroPython, and electrical timing confidence.

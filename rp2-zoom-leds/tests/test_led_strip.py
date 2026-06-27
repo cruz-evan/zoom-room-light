@@ -93,6 +93,47 @@ def test_starting_soon_renders_smooth_cyan_cue_with_tail(monkeypatch):
     assert sum(pixels[7]) > sum(background)
 
 
+def test_starting_soon_blends_in_progress_blue_as_start_approaches(monkeypatch):
+    ticks = {"now": 0}
+    led_strip = load_led_strip(monkeypatch, ticks)
+    blue = (11, 21, 63)
+
+    strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0)
+    strip.apply(
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 900,
+        }
+    )
+    assert list(strip.pixels.values).count(blue) == 0
+
+    strip.apply(
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 450,
+        }
+    )
+    halfway_blue = list(strip.pixels.values).count(blue)
+    assert 8 <= halfway_blue <= 16
+
+    strip.apply(
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 0,
+        }
+    )
+    assert list(strip.pixels.values).count(blue) == 24
+
+
 def test_in_progress_renders_full_strip_blue_pulse(monkeypatch):
     ticks = {"now": 0}
     led_strip = load_led_strip(monkeypatch, ticks)

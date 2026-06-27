@@ -12,6 +12,8 @@ STARTING_SOON_BLOCK_LEDS = 7.0
 STARTING_SOON_TAIL_LEDS = 10.0
 STARTING_SOON_CYAN = (44, 213, 252)
 STARTING_SOON_BACKGROUND = (0, 2, 8)
+STARTING_SOON_IN_PROGRESS_BLUE = (43, 82, 252)
+STARTING_SOON_BLEND_SCRAMBLE_MS = 750
 
 
 def _ticks_ms():
@@ -248,19 +250,42 @@ class LedStrip:
         try:
             background = self._scaled(STARTING_SOON_BACKGROUND)
             levels = self._starting_soon_levels(head, led_count, block, tail)
+            blend = self._starting_soon_blend_amount()
 
-            if force or not self._starting_soon_active:
+            if blend > 0.0:
+                bucket = elapsed // STARTING_SOON_BLEND_SCRAMBLE_MS
+                threshold = int(255 * blend + 0.5)
+                meeting_blue = self._scaled(
+                    STARTING_SOON_IN_PROGRESS_BLUE,
+                    0.25 + (0.75 * self._sine_wave(IN_PROGRESS_PULSE_CYCLE_MS, self.effect_started)),
+                )
+                for index in range(self.count):
+                    level = levels.get(index, 0.0)
+                    color = background
+                    if level > 0.0:
+                        color = self._scaled(
+                            _mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)
+                        )
+                    if self._starting_soon_blend_pixel(index, bucket, threshold):
+                        color = meeting_blue
+                    self._set_pixel(index, color)
+            elif force or not self._starting_soon_active:
                 self._fill_pixels(background)
+                for index, level in levels.items():
+                    self._set_pixel(
+                        index,
+                        self._scaled(_mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)),
+                    )
             else:
                 for index in self._starting_soon_active:
                     if index not in levels:
                         self._set_pixel(index, background)
 
-            for index, level in levels.items():
-                self._set_pixel(
-                    index,
-                    self._scaled(_mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)),
-                )
+                for index, level in levels.items():
+                    self._set_pixel(
+                        index,
+                        self._scaled(_mix_rgb(STARTING_SOON_BACKGROUND, STARTING_SOON_CYAN, level)),
+                    )
 
             self.pixels.write()
             self.last_refresh_ms = now
@@ -271,6 +296,35 @@ class LedStrip:
             self.available = False
             self.pixels = None
             return False
+
+    def _starting_soon_blend_amount(self):
+        seconds = self.current_command.get("seconds_until_expected_state_change")
+        if seconds is None:
+            return 0.0
+
+        try:
+            remaining = float(seconds)
+        except (TypeError, ValueError):
+            return 0.0
+
+        try:
+            threshold_minutes = float(
+                self.current_command.get("threshold", self.current_command.get("minutes", 15.0))
+            )
+        except (TypeError, ValueError):
+            threshold_minutes = 15.0
+
+        total = max(1.0, threshold_minutes * 60.0)
+        return _clamp_unit(1.0 - (max(0.0, remaining) / total))
+
+    def _starting_soon_blend_pixel(self, index, bucket, threshold):
+        if threshold <= 0:
+            return False
+        if threshold >= 255:
+            return True
+        value = (int(index) * 1103515245 + int(bucket) * 12345 + 0x45D9F3B) & 0xFFFFFFFF
+        value = (value ^ (value >> 16)) & 0xFF
+        return value < threshold
 
     def _fill_pixels(self, color):
         buf = getattr(self.pixels, "buf", None)

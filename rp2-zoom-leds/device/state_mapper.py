@@ -3,7 +3,7 @@ def command_from_state(state):
         raise ValueError("state must be an object")
 
     if isinstance(state.get("command"), dict):
-        return state["command"]
+        return _with_expected_state_change(state["command"], state)
 
     meeting_status = state.get("meeting_status")
     if meeting_status:
@@ -12,34 +12,34 @@ def command_from_state(state):
     if state.get("in_use"):
         minutes_until_end = state.get("minutes_until_end")
         if minutes_until_end is not None:
-            return {
+            return _with_expected_state_change({
                 "mode": "meeting_status",
                 "state": "ending_soon",
                 "minutes": _minutes(minutes_until_end),
-            }
+            }, state)
         return {"mode": "meeting_status", "state": "in_progress"}
 
     if state.get("next_meeting_id"):
-        return {
+        return _with_expected_state_change({
             "mode": "meeting_status",
             "state": "starting_soon",
             "minutes": _minutes(state.get("minutes_until_next")),
-        }
+        }, state)
 
     color = str(state.get("color") or "").lower()
     label = str(state.get("label") or "").lower()
     if color == "yellow" or "starts soon" in label:
-        return {
+        return _with_expected_state_change({
             "mode": "meeting_status",
             "state": "starting_soon",
             "minutes": _minutes(state.get("minutes_until_next")),
-        }
+        }, state)
     if color == "orange" or "ending soon" in label:
-        return {
+        return _with_expected_state_change({
             "mode": "meeting_status",
             "state": "ending_soon",
             "minutes": _minutes(state.get("minutes_until_end")),
-        }
+        }, state)
     if color in ("red", "green") or label in ("in use", "free"):
         return {"mode": "meeting_status", "state": "in_progress"} if color == "red" else {"mode": "off"}
 
@@ -54,6 +54,19 @@ def command_from_meeting_status(state, minutes=None):
     if state == "in_progress":
         return {"mode": "meeting_status", "state": "in_progress"}
     raise ValueError("unsupported meeting_status")
+
+
+def _with_expected_state_change(command, state):
+    seconds = state.get("seconds_until_expected_state_change")
+    if seconds is None:
+        return command
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return command
+    command = dict(command)
+    command["seconds_until_expected_state_change"] = max(0, min(24 * 60 * 60, seconds))
+    return command
 
 
 def _minutes(value):

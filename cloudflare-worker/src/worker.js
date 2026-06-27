@@ -1186,6 +1186,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
           mode: "meeting_status",
           state: "ending_soon",
           minutes: schedule.ending.minutes,
+          seconds_until_expected_state_change: schedule.ending.seconds_until_expected_state_change,
         },
         lastEvent: "schedule.ending_soon",
         updatedAt: now,
@@ -1309,6 +1310,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
         mode: "meeting_status",
         state: "starting_soon",
         minutes: schedule.upcoming.minutes,
+        seconds_until_expected_state_change: schedule.upcoming.seconds_until_expected_state_change,
       },
       lastEvent: "schedule.upcoming",
       updatedAt: now,
@@ -1334,13 +1336,17 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
 }
 
 function deviceStateResponse(state, env, deviceId = "", assignment = null) {
+  const command = normalizeCommand(state.command);
   const response = {
     v: 1,
-    command: normalizeCommand(state.command),
+    command,
     poll_seconds: pollSeconds(env),
     updated_at: String(state.updated_at || ""),
     last_event: String(state.last_event || ""),
   };
+  if (command.seconds_until_expected_state_change !== undefined) {
+    response.seconds_until_expected_state_change = command.seconds_until_expected_state_change;
+  }
   if (state.ota_check_requested_at) {
     response.ota_check_requested_at = String(state.ota_check_requested_at);
   }
@@ -1452,6 +1458,7 @@ function nextUpcomingMeeting(meetings, now, lookaheadMinutes) {
     return {
       meeting: normalizedMeeting(meeting),
       minutes: lookaheadMinutes,
+      seconds_until_expected_state_change: secondsUntil(start, now),
       starts_at: start.toISOString(),
       ends_at: scheduleEndAt(meeting),
     };
@@ -1512,6 +1519,7 @@ function endingSoonMeeting(meetings, currentState, now, lookaheadMinutes) {
     return {
       meeting: normalizedMeeting(meeting),
       minutes: lookaheadMinutes,
+      seconds_until_expected_state_change: secondsUntil(end, now),
       starts_at: start.toISOString(),
       ends_at: end.toISOString(),
     };
@@ -1677,9 +1685,20 @@ function publicScheduleStatus(schedule) {
       ? { starts_at: schedule.active.starts_at, ends_at: schedule.active.ends_at }
       : null,
     upcoming: schedule.upcoming
-      ? { minutes: schedule.upcoming.minutes, starts_at: schedule.upcoming.starts_at, ends_at: schedule.upcoming.ends_at }
+      ? {
+          minutes: schedule.upcoming.minutes,
+          seconds_until_expected_state_change: schedule.upcoming.seconds_until_expected_state_change,
+          starts_at: schedule.upcoming.starts_at,
+          ends_at: schedule.upcoming.ends_at,
+        }
       : null,
-    ending: schedule.ending ? { minutes: schedule.ending.minutes, ends_at: schedule.ending.ends_at } : null,
+    ending: schedule.ending
+      ? {
+          minutes: schedule.ending.minutes,
+          seconds_until_expected_state_change: schedule.ending.seconds_until_expected_state_change,
+          ends_at: schedule.ending.ends_at,
+        }
+      : null,
   };
 }
 
@@ -1694,11 +1713,16 @@ function normalizeCommand(command) {
     }
 
     if (command.state === "starting_soon" || command.state === "ending_soon") {
-      return {
+      const normalized = {
         mode: "meeting_status",
         state: command.state,
         minutes: boundedMinutes(command.minutes),
       };
+      const seconds = boundedSeconds(command.seconds_until_expected_state_change);
+      if (seconds !== null) {
+        normalized.seconds_until_expected_state_change = seconds;
+      }
+      return normalized;
     }
   }
 
@@ -2100,6 +2124,21 @@ function boundedMinutes(value) {
     return 5;
   }
   return Math.max(0, Math.min(120, parsed));
+}
+
+function boundedSeconds(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(0, Math.min(24 * 60 * 60, parsed));
+}
+
+function secondsUntil(target, now) {
+  return Math.max(0, Math.ceil((target.getTime() - now.getTime()) / 1000));
 }
 
 function minutesFromUrl(rawUrl) {

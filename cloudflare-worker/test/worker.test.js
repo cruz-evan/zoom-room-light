@@ -269,7 +269,12 @@ describe("Cloudflare Worker relay", () => {
       assert.equal(body.states.length, 2);
 
       const aquarium = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-a"), relayEnv));
-      assert.deepEqual(aquarium.command, { mode: "meeting_status", state: "starting_soon", minutes: 15 });
+      assert.equal(aquarium.command.mode, "meeting_status");
+      assert.equal(aquarium.command.state, "starting_soon");
+      assert.equal(aquarium.command.minutes, 15);
+      assert.ok(aquarium.command.seconds_until_expected_state_change > 13 * 60);
+      assert.ok(aquarium.command.seconds_until_expected_state_change <= 14 * 60);
+      assert.equal(aquarium.seconds_until_expected_state_change, aquarium.command.seconds_until_expected_state_change);
       assert.equal(aquarium.microsoft_calendar_user_id, "Boardroom@cronometer.com");
 
       const rainbow = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-b"), relayEnv));
@@ -343,7 +348,12 @@ describe("Cloudflare Worker relay", () => {
       assert.equal(response.status, 200);
 
       const aquarium = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-a"), relayEnv));
-      assert.deepEqual(aquarium.command, { mode: "meeting_status", state: "starting_soon", minutes: 15 });
+      assert.equal(aquarium.command.mode, "meeting_status");
+      assert.equal(aquarium.command.state, "starting_soon");
+      assert.equal(aquarium.command.minutes, 15);
+      assert.ok(aquarium.command.seconds_until_expected_state_change > 13 * 60);
+      assert.ok(aquarium.command.seconds_until_expected_state_change <= 14 * 60);
+      assert.equal(aquarium.seconds_until_expected_state_change, aquarium.command.seconds_until_expected_state_change);
       assert.equal(aquarium.last_event, "schedule.upcoming");
       assert.ok(requestedUrls.some((url) => url.includes("/users/Boardroom%40cronometer.com/calendarView?")));
     } finally {
@@ -744,11 +754,12 @@ describe("Cloudflare Worker relay", () => {
       assert.equal(response.status, 200);
 
       const state = await json(await worker.fetch(new Request("https://relay.test/device/state"), relayEnv));
-      assert.deepEqual(state.command, {
-        mode: "meeting_status",
-        state: "starting_soon",
-        minutes: 15,
-      });
+      assert.equal(state.command.mode, "meeting_status");
+      assert.equal(state.command.state, "starting_soon");
+      assert.equal(state.command.minutes, 15);
+      assert.ok(state.command.seconds_until_expected_state_change > 13 * 60);
+      assert.ok(state.command.seconds_until_expected_state_change <= 14 * 60);
+      assert.equal(state.seconds_until_expected_state_change, state.command.seconds_until_expected_state_change);
       assert.equal(state.last_event, "schedule.upcoming");
       assert.ok(requestedUrls.some((url) => url === "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"));
       assert.ok(requestedUrls.some((url) => url.includes("/users/room%40example.com/calendarView?")));
@@ -887,6 +898,7 @@ describe("Cloudflare Worker relay", () => {
       mode: "meeting_status",
       state: "starting_soon",
       minutes: 5,
+      seconds_until_expected_state_change: 270,
     });
     assert.equal(state.last_event, "schedule.upcoming");
   });
@@ -908,6 +920,7 @@ describe("Cloudflare Worker relay", () => {
     );
 
     assert.equal(schedule.upcoming.minutes, 15);
+    assert.equal(schedule.upcoming.seconds_until_expected_state_change, 870);
     assert.equal(schedule.upcoming.meeting.id, "empty-room-warning");
   });
 
@@ -1023,6 +1036,7 @@ describe("Cloudflare Worker relay", () => {
       mode: "meeting_status",
       state: "ending_soon",
       minutes: 5,
+      seconds_until_expected_state_change: 300,
     });
     assert.equal(state.last_event, "schedule.ending_soon");
   });

@@ -50,6 +50,19 @@ def _clamp_float(value, default, minimum, maximum):
     return number
 
 
+def _clamp_int(value, default, minimum, maximum):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+
+    if number < minimum:
+        return minimum
+    if number > maximum:
+        return maximum
+    return number
+
+
 def normalize_rgb(rgb):
     if not isinstance(rgb, (list, tuple)) or len(rgb) != 3:
         raise ProtocolError("RGB must be a list of three values")
@@ -92,12 +105,28 @@ def normalize_command(command):
         if state not in VALID_MEETING_STATES:
             raise ProtocolError("Unsupported meeting status state")
 
-        return {
+        minutes = _clamp_float(command.get("minutes", 5), 5.0, 0.0, 120.0)
+        has_expected_change = command.get("seconds_until_expected_state_change") is not None
+        threshold_default = minutes if has_expected_change else 5.0
+        normalized = {
             "mode": "meeting_status",
             "state": state,
-            "minutes": _clamp_float(command.get("minutes", 5), 5.0, 0.0, 120.0),
-            "threshold": _clamp_float(command.get("threshold", 5), 5.0, 1.0, 120.0),
+            "minutes": minutes,
+            "threshold": _clamp_float(
+                command.get("threshold", threshold_default),
+                threshold_default,
+                1.0,
+                120.0,
+            ),
         }
+        if has_expected_change:
+            normalized["seconds_until_expected_state_change"] = _clamp_int(
+                command.get("seconds_until_expected_state_change"),
+                0,
+                0,
+                24 * 60 * 60,
+            )
+        return normalized
 
     try:
         participants = int(command.get("participants", 0))

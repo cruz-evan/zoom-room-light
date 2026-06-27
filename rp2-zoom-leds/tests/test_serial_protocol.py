@@ -38,6 +38,21 @@ def test_parse_meeting_status_command():
     }
 
 
+def test_parse_meeting_status_preserves_expected_state_change_seconds():
+    command = parse_line(
+        b'{"mode":"meeting_status","state":"starting_soon","minutes":15,'
+        b'"seconds_until_expected_state_change":450}\n'
+    )
+
+    assert command == {
+        "mode": "meeting_status",
+        "state": "starting_soon",
+        "minutes": 15.0,
+        "threshold": 15.0,
+        "seconds_until_expected_state_change": 450,
+    }
+
+
 def test_meeting_status_rejects_unknown_state():
     with pytest.raises(ProtocolError):
         normalize_command({"mode": "meeting_status", "state": "break"})

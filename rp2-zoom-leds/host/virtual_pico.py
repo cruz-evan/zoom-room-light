@@ -33,11 +33,75 @@ DEFAULT_SEQUENCE = (
     ("off", {"mode": "off"}),
 )
 
+STARTING_SOON_COUNTDOWN_SEQUENCE = (
+    (
+        "starting soon 15m",
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 900,
+        },
+    ),
+    (
+        "starting soon 10m",
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 600,
+        },
+    ),
+    (
+        "starting soon 7m30s",
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 450,
+        },
+    ),
+    (
+        "starting soon 5m",
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 300,
+        },
+    ),
+    (
+        "starting soon 2m",
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 120,
+        },
+    ),
+    (
+        "starting soon start",
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 0,
+        },
+    ),
+)
+
 SEQUENCES = {
     "all": DEFAULT_SEQUENCE,
     "startup": DEFAULT_SEQUENCE,
     "meeting-status": tuple(item for item in DEFAULT_SEQUENCE if item[1].get("mode") == "meeting_status"),
     "starting-soon": (("starting soon", {"mode": "meeting_status", "state": "starting_soon", "minutes": 5}),),
+    "starting-soon-countdown": STARTING_SOON_COUNTDOWN_SEQUENCE,
     "in-progress": (("in progress", {"mode": "meeting_status", "state": "in_progress"}),),
     "ending-soon": (("ending soon", {"mode": "meeting_status", "state": "ending_soon", "minutes": 2}),),
     "pulse": (("pulse blue", {"mode": "pulse", "rgb": [0, 120, 255], "speed": 0.8}),),
@@ -418,10 +482,13 @@ def _estimate_command_cost(budget, command, led_count, force):
 
     if mode == "meeting_status" and command.get("state") == "starting_soon":
         active = min(led_count, 19)
-        if force:
+        if command.get("seconds_until_expected_state_change") is not None:
+            budget.charge_us(led_count * budget.pattern_math_us_per_led, "starting_soon_blend_frame")
+            budget.alloc_temp(900 + (active * 96), "starting_soon_levels")
+        elif force:
             budget.charge_us(led_count * budget.pattern_math_us_per_led, "starting_soon_full_frame")
+            budget.alloc_temp(900 + (active * 96), "starting_soon_levels")
         budget.charge_us(active * budget.pattern_math_us_per_active_led, "starting_soon_active_pixels")
-        budget.alloc_temp(900 + (active * 96), "starting_soon_levels")
     elif mode in ("pulse", "meeting_status") or mode == "meeting":
         budget.charge_us(budget.solid_math_us, "solid_or_pulse_math")
     elif mode in ("solid", "off"):
