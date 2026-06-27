@@ -119,6 +119,8 @@ render_secrets_from_env() {
     WIFI_PASSWORD
     OFFICE_WIFI_SSID
     OFFICE_WIFI_PASSWORD
+    OUTPOST_WIFI_SSID
+    OUTPOST_WIFI_PASSWORD
     WIFI_FALLBACK_SSID
     WIFI_FALLBACK_PASSWORD
     FALLBACK_PHONE_HOTSPOT_WIFI_SSID
@@ -144,6 +146,12 @@ render_secrets_from_env() {
   if env_is_set_and_nonempty WIFI_SSID || env_is_set_and_nonempty WIFI_PASSWORD; then
     if ! env_is_set_and_nonempty WIFI_SSID || ! env_is_set_and_nonempty WIFI_PASSWORD; then
       echo "WIFI_SSID and WIFI_PASSWORD must both be set when overriding Wi-Fi from the environment." >&2
+      exit 1
+    fi
+  fi
+  if env_is_set_and_nonempty OUTPOST_WIFI_SSID || env_is_set_and_nonempty OUTPOST_WIFI_PASSWORD; then
+    if ! env_is_set_and_nonempty OUTPOST_WIFI_SSID || ! env_is_set_and_nonempty OUTPOST_WIFI_PASSWORD; then
+      echo "OUTPOST_WIFI_SSID and OUTPOST_WIFI_PASSWORD must both be set when overriding Wi-Fi from the environment." >&2
       exit 1
     fi
   fi
@@ -188,7 +196,7 @@ if [[ "$COPY_SECRETS" == "1" ]]; then
   secrets_file="${DEVICE_SECRETS_FILE:-$ROOT/device/secrets.py}"
   using_example_secrets=0
   if [[ ! -f "$secrets_file" ]]; then
-    if env_is_set_and_nonempty WIFI_SSID || env_is_set_and_nonempty WIFI_PASSWORD; then
+    if env_is_set_and_nonempty WIFI_SSID || env_is_set_and_nonempty WIFI_PASSWORD || env_is_set_and_nonempty OUTPOST_WIFI_SSID || env_is_set_and_nonempty OUTPOST_WIFI_PASSWORD; then
       secrets_file="$ROOT/device/secrets.example.py"
       using_example_secrets=1
     fi
@@ -206,7 +214,7 @@ if [[ "$COPY_SECRETS" == "1" ]]; then
 
   upload_secrets_file="$secrets_file"
   tmp_secrets_file=""
-  if env_is_set_and_nonempty WIFI_SSID || env_is_set_and_nonempty WIFI_PASSWORD; then
+  if env_is_set_and_nonempty WIFI_SSID || env_is_set_and_nonempty WIFI_PASSWORD || env_is_set_and_nonempty OUTPOST_WIFI_SSID || env_is_set_and_nonempty OUTPOST_WIFI_PASSWORD; then
     tmp_secrets_dir="$(mktemp -d)"
     tmp_secrets_file="$tmp_secrets_dir/secrets.py"
     render_secrets_from_env "$secrets_file" "$tmp_secrets_file"

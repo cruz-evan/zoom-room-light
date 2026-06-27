@@ -21,11 +21,12 @@ from state_mapper import command_from_state
 try:
     from state_client import fetch_state
     from wifi_connect import connect_wifi_profiles
-    from wifi_profiles import profiles_from_config
+    from wifi_profiles import profiles_from_config, promote_connected_profile
 except ImportError:
     fetch_state = None
     connect_wifi_profiles = None
     profiles_from_config = None
+    promote_connected_profile = None
 
 try:
     from ota_client import check_for_update
@@ -786,12 +787,16 @@ class NetworkCommandReader:
         if self.wlan is None or not self.wlan.isconnected():
             started = time.ticks_ms()
             self.telemetry.log("wifi_connect_start")
-            self.wlan = connect_wifi_profiles(
-                profiles_from_config(config),
+            profiles = profiles_from_config(config)
+            self.wlan, connected_profile = connect_wifi_profiles(
+                profiles,
                 getattr(config, "WIFI_CONNECT_TIMEOUT_SECONDS", 20),
                 getattr(config, "DEVICE_HOSTNAME", "auto"),
                 getattr(config, "DEVICE_HOSTNAME_PREFIX", "zoom-light"),
+                return_profile=True,
             )
+            if connected_profile and promote_connected_profile:
+                promote_connected_profile(profiles, connected_profile)
             try:
                 ip_address = self.wlan.ifconfig()[0]
             except Exception:

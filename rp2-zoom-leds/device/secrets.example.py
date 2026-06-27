@@ -5,6 +5,8 @@ WIFI_PASSWORD = "your-wifi-password"
 # first, then these secrets.py bootstrap profiles are tried in this order.
 OFFICE_WIFI_SSID = ""
 OFFICE_WIFI_PASSWORD = ""
+OUTPOST_WIFI_SSID = ""
+OUTPOST_WIFI_PASSWORD = ""
 WIFI_FALLBACK_SSID = ""
 WIFI_FALLBACK_PASSWORD = ""
 FALLBACK_PHONE_HOTSPOT_WIFI_SSID = ""

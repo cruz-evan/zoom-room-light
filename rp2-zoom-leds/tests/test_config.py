@@ -178,13 +178,29 @@ def test_ota_config_can_be_explicitly_enabled():
 
 def test_wifi_fallback_secret_names_are_exposed():
     config = load_config_with_secrets(
+        OUTPOST_WIFI_SSID="outpost",
+        OUTPOST_WIFI_PASSWORD="outpost-secret",
         WIFI_FALLBACK_SSID="fallback",
         WIFI_FALLBACK_PASSWORD="fallback-secret",
         PHONE_HOTSPOT_SSID="phone",
         PHONE_HOTSPOT_PASSWORD="phone-secret",
     )
 
+    assert config.OUTPOST_WIFI_SSID == "outpost"
+    assert config.OUTPOST_WIFI_PASSWORD == "outpost-secret"
     assert config.WIFI_FALLBACK_SSID == "fallback"
     assert config.WIFI_FALLBACK_PASSWORD == "fallback-secret"
     assert config.PHONE_HOTSPOT_SSID == "phone"
     assert config.PHONE_HOTSPOT_PASSWORD == "phone-secret"
+
+
+def test_ota_config_can_use_outpost_wifi_without_generic_primary():
+    config = load_config_with_secrets(
+        OUTPOST_WIFI_SSID="outpost",
+        OTA_MANIFEST_URL="https://example.test/manifest.json",
+        OTA_CONFIG_KEY="secret",
+        OTA_CONFIG_ENABLED=True,
+    )
+
+    assert config.WIFI_CONFIGURED is True
+    assert config.OTA_CONFIG_ENABLED is True

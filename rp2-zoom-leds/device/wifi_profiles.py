@@ -7,6 +7,7 @@ except ImportError:
 WIFI_PROFILES_FILE = "wifi_profiles.json"
 BOOTSTRAP_PROFILE_SOURCES = (
     ("office", "OFFICE_WIFI_SSID", "OFFICE_WIFI_PASSWORD"),
+    ("outpost", "OUTPOST_WIFI_SSID", "OUTPOST_WIFI_PASSWORD"),
     ("primary", "WIFI_SSID", "WIFI_PASSWORD"),
     ("fallback", "WIFI_FALLBACK_SSID", "WIFI_FALLBACK_PASSWORD"),
     (
@@ -16,19 +17,16 @@ BOOTSTRAP_PROFILE_SOURCES = (
     ),
     ("phone", "PHONE_HOTSPOT_SSID", "PHONE_HOTSPOT_PASSWORD"),
 )
+PHONE_PROFILE_LABELS = ("fallback-phone", "phone")
 
 
 def profiles_from_config(config):
     profiles = _load_saved_profiles()
-    seen = set(profile["ssid"] for profile in profiles if isinstance(profile, dict))
 
     for profile in _bootstrap_profiles(config):
-        if profile["ssid"] in seen:
-            continue
         profiles.append(profile)
-        seen.add(profile["ssid"])
 
-    return profiles
+    return _phone_profiles_last(_validated_profiles(profiles))
 
 
 def _bootstrap_profiles(config):
@@ -45,6 +43,29 @@ def write_profiles(profiles):
     clean = _validated_profiles(profiles)
     with open(WIFI_PROFILES_FILE, "w") as handle:
         handle.write(json.dumps({"profiles": clean}))
+    return clean
+
+
+def promote_connected_profile(profiles, connected_profile):
+    clean = _validated_profiles(profiles)
+    ssid = str((connected_profile or {}).get("ssid") or "")
+    if not ssid:
+        return clean
+
+    match_index = -1
+    for index, profile in enumerate(clean):
+        if profile["ssid"] == ssid:
+            match_index = index
+            break
+
+    if match_index < 0 or _is_phone_profile(clean[match_index]):
+        return clean
+
+    ordered = [clean[match_index]]
+    ordered.extend(profile for index, profile in enumerate(clean) if index != match_index)
+    ordered = _phone_profiles_last(ordered)
+    if ordered != clean:
+        return write_profiles(ordered)
     return clean
 
 
@@ -77,3 +98,19 @@ def _validated_profiles(raw_profiles):
         profiles.append(item)
         seen.add(ssid)
     return profiles
+
+
+def _phone_profiles_last(profiles):
+    regular = []
+    phone = []
+    for profile in profiles:
+        if _is_phone_profile(profile):
+            phone.append(profile)
+        else:
+            regular.append(profile)
+    return regular + phone
+
+
+def _is_phone_profile(profile):
+    label = str((profile or {}).get("label") or "")
+    return label in PHONE_PROFILE_LABELS

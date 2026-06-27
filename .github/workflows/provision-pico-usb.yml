@@ -34,10 +34,12 @@ jobs:
         working-directory: rp2-zoom-leds
 
     env:
-      WIFI_SSID: ${{ secrets.WIFI_SSID || secrets.OFFICE_WIFI_SSID || secrets.FALLBACK_PHONE_HOTSPOT_WIFI_SSID || secrets.PHONE_HOTSPOT_SSID }}
-      WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD || secrets.OFFICE_WIFI_PASSWORD || secrets.FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD || secrets.PHONE_HOTSPOT_PASSWORD }}
+      WIFI_SSID: ${{ secrets.WIFI_SSID || secrets.OUTPOST_WIFI_SSID || secrets.OFFICE_WIFI_SSID || secrets.FALLBACK_PHONE_HOTSPOT_WIFI_SSID || secrets.PHONE_HOTSPOT_SSID }}
+      WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD || secrets.OUTPOST_WIFI_PASSWORD || secrets.OFFICE_WIFI_PASSWORD || secrets.FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD || secrets.PHONE_HOTSPOT_PASSWORD }}
       OFFICE_WIFI_SSID: ${{ secrets.OFFICE_WIFI_SSID }}
       OFFICE_WIFI_PASSWORD: ${{ secrets.OFFICE_WIFI_PASSWORD }}
+      OUTPOST_WIFI_SSID: ${{ secrets.OUTPOST_WIFI_SSID }}
+      OUTPOST_WIFI_PASSWORD: ${{ secrets.OUTPOST_WIFI_PASSWORD }}
       WIFI_FALLBACK_SSID: ${{ secrets.WIFI_FALLBACK_SSID }}
       WIFI_FALLBACK_PASSWORD: ${{ secrets.WIFI_FALLBACK_PASSWORD }}
       FALLBACK_PHONE_HOTSPOT_WIFI_SSID: ${{ secrets.FALLBACK_PHONE_HOTSPOT_WIFI_SSID }}
@@ -68,7 +70,7 @@ jobs:
       - name: Check Wi-Fi secrets
         run: |
           if [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PASSWORD" ]; then
-            echo "A complete WIFI_*, OFFICE_WIFI_*, or PHONE_HOTSPOT_* repository secret pair is required for USB provisioning." >&2
+            echo "A complete WIFI_*, OUTPOST_WIFI_*, OFFICE_WIFI_*, or PHONE_HOTSPOT_* repository secret pair is required for USB provisioning." >&2
             exit 1
           fi
           if [ -z "$STATE_URL" ] && [ -z "$OTA_MANIFEST_URL" ]; then

@@ -46,6 +46,8 @@ def test_collect_profiles_supports_fallback_phone_hotspot_secret_names():
         {
             "OFFICE_WIFI_SSID": "office",
             "OFFICE_WIFI_PASSWORD": "office-secret",
+            "OUTPOST_WIFI_SSID": "outpost",
+            "OUTPOST_WIFI_PASSWORD": "outpost-secret",
             "FALLBACK_PHONE_HOTSPOT_WIFI_SSID": "phone",
             "FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD": "phone-secret",
         }
@@ -53,5 +55,27 @@ def test_collect_profiles_supports_fallback_phone_hotspot_secret_names():
 
     assert profiles == [
         {"label": "office", "ssid": "office", "password": "office-secret"},
+        {"label": "outpost", "ssid": "outpost", "password": "outpost-secret"},
         {"label": "fallback-phone", "ssid": "phone", "password": "phone-secret"},
+    ]
+
+
+def test_collect_profiles_orders_outpost_and_primary_before_phone():
+    build_wifi_config = load_build_module()
+
+    profiles = build_wifi_config.collect_profiles(
+        {
+            "OUTPOST_WIFI_SSID": "outpost",
+            "OUTPOST_WIFI_PASSWORD": "outpost-secret",
+            "WIFI_SSID": "primary",
+            "WIFI_PASSWORD": "primary-secret",
+            "PHONE_HOTSPOT_SSID": "phone",
+            "PHONE_HOTSPOT_PASSWORD": "phone-secret",
+        }
+    )
+
+    assert profiles == [
+        {"label": "outpost", "ssid": "outpost", "password": "outpost-secret"},
+        {"label": "primary", "ssid": "primary", "password": "primary-secret"},
+        {"label": "phone", "ssid": "phone", "password": "phone-secret"},
     ]

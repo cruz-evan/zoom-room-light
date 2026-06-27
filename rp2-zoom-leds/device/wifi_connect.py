@@ -3,13 +3,21 @@ import time
 import network
 
 
-def connect_wifi_profiles(profiles, timeout_seconds=20, hostname="auto", hostname_prefix="zoom-light"):
+def connect_wifi_profiles(
+    profiles,
+    timeout_seconds=20,
+    hostname="auto",
+    hostname_prefix="zoom-light",
+    return_profile=False,
+):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     _disable_power_save(wlan)
     resolved_hostname = _configure_hostname(wlan, hostname, hostname_prefix)
 
     if wlan.isconnected():
+        if return_profile:
+            return wlan, None
         return wlan
 
     last_error = None
@@ -30,6 +38,8 @@ def connect_wifi_profiles(profiles, timeout_seconds=20, hostname="auto", hostnam
                 print("Wi-Fi connected:", wlan.ifconfig()[0], resolved_hostname)
             else:
                 print("Wi-Fi connected:", wlan.ifconfig()[0])
+            if return_profile:
+                return wlan, profile
             return wlan
         except Exception as exc:
             last_error = exc

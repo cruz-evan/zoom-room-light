@@ -492,7 +492,18 @@ OTA_CONFIG_KEY      same long random value provisioned on every Pico
 ```
 
 At least one complete Wi-Fi secret pair is required for the workflow to publish
-`wifi-config.json`. Recommended office-plus-hotspot setup:
+`wifi-config.json`. Recommended outpost/main-plus-hotspot setup:
+
+```text
+OUTPOST_WIFI_SSID
+OUTPOST_WIFI_PASSWORD
+WIFI_SSID
+WIFI_PASSWORD
+PHONE_HOTSPOT_SSID
+PHONE_HOTSPOT_PASSWORD
+```
+
+The office-specific names are also supported:
 
 ```text
 OFFICE_WIFI_SSID
@@ -501,12 +512,9 @@ PHONE_HOTSPOT_SSID
 PHONE_HOTSPOT_PASSWORD
 ```
 
-The existing generic pair is still supported and works as the primary profile
-when no explicit office pair is set:
+The existing generic fallback pair is still supported:
 
 ```text
-WIFI_SSID
-WIFI_PASSWORD
 WIFI_FALLBACK_SSID
 WIFI_FALLBACK_PASSWORD
 ```
@@ -518,13 +526,17 @@ FALLBACK_PHONE_HOTSPOT_WIFI_SSID
 FALLBACK_PHONE_HOTSPOT_WIFI_PASSWORD
 ```
 
-The Pico tries saved encrypted OTA profiles first, in workflow order. It then
-falls back to bootstrap profiles stored directly in `secrets.py`, in the same
-order:
+The Pico tries saved encrypted OTA profiles first, with non-phone profiles ahead
+of phone-hotspot profiles. When it successfully connects to a non-phone profile,
+it writes that profile to the front of `wifi_profiles.json` so the same network
+is tried first on the next boot. It then falls back to bootstrap profiles stored
+directly in `secrets.py`, with phone hotspots kept last:
 
 ```python
 OFFICE_WIFI_SSID = ""
 OFFICE_WIFI_PASSWORD = ""
+OUTPOST_WIFI_SSID = "outpost-wifi"
+OUTPOST_WIFI_PASSWORD = "outpost-password"
 WIFI_SSID = "office-wifi"
 WIFI_PASSWORD = "office-password"
 WIFI_FALLBACK_SSID = ""

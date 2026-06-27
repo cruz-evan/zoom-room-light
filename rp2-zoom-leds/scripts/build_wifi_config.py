@@ -12,6 +12,7 @@ import config_crypto  # noqa: E402
 
 PROFILE_SOURCES = (
     ("office", "OFFICE_WIFI_SSID", "OFFICE_WIFI_PASSWORD"),
+    ("outpost", "OUTPOST_WIFI_SSID", "OUTPOST_WIFI_PASSWORD"),
     ("primary", "WIFI_SSID", "WIFI_PASSWORD"),
     ("fallback", "WIFI_FALLBACK_SSID", "WIFI_FALLBACK_PASSWORD"),
     (
