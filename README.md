@@ -244,7 +244,7 @@ For production polling, set the Pico's `STATE_URL` to the Worker endpoint:
 
 ```python
 STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
-DEVICE_POLL_TOKEN = "same-low-privilege-poll-token-if-configured"
+STATE_POLL_TOKEN = "same-low-privilege-poll-token-if-configured"
 OTA_MANIFEST_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/ota/manifest.json"
 ```
 

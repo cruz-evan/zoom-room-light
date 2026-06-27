@@ -10,7 +10,7 @@ The first milestone does not require Zoom. Run the host simulator, send fake mee
 - The Pico W can poll the Cloudflare relay directly over Wi-Fi, so the installed light does not need a laptop.
 - USB serial JSON-lines control remains available for local testing and emergency recovery.
 - GitHub Pages can publish OTA app-file bundles for wireless Pico W updates.
-- Zoom and Cloudflare secrets stay off the device. The Pico stores only Wi-Fi credentials, the relay `STATE_URL`, the optional low-privilege `DEVICE_POLL_TOKEN`, and optional OTA endpoint config in ignored `device/secrets.py`.
+- Zoom and Cloudflare secrets stay off the device. The Pico stores only Wi-Fi credentials, the relay `STATE_URL`, the optional low-privilege `STATE_POLL_TOKEN`, and optional OTA endpoint config in ignored `device/secrets.py`.
 - One shared firmware tree can run on multiple boards. Board identity, room mapping, hostname, and LED wiring live in ignored per-board `device/secrets.py` files.
 - `mpremote` handles REPL access, file deployment, and basic device checks.
 
@@ -157,10 +157,10 @@ DEVICE_HARDWARE = {
     "board-room-d": {"led_pin": 6, "led_count": 144},
 }
 STATE_URL = "http://YOUR_LAPTOP_LAN_IP:5050/device/state"
-DEVICE_POLL_TOKEN = ""
+STATE_POLL_TOKEN = ""
 ```
 
-Use `DEVICE_POLL_TOKEN` only as a low-privilege polling token for the relay. Do
+Use `STATE_POLL_TOKEN` only as a low-privilege polling token for the relay. Do
 not put Zoom OAuth credentials or the Zoom webhook secret on the Pico W.
 
 When `device/secrets.py` is missing or incomplete, network mode stays disabled
@@ -201,7 +201,7 @@ DEVICE_HARDWARE = {
 WIFI_SSID = "..."
 WIFI_PASSWORD = "..."
 STATE_URL = "https://your-relay.example.com/device/state"
-DEVICE_POLL_TOKEN = "..."
+STATE_POLL_TOKEN = "..."
 
 TELEMETRY_DEVICE_ID = DEVICE_ID
 ```
@@ -408,7 +408,7 @@ OTA artifact. That USB workflow must run on a self-hosted runner with the Pico
 connected over USB; GitHub-hosted runners cannot access your local board. Set at
 least one repository variable, `STATE_URL` or `OTA_MANIFEST_URL`, so the
 workflow does not upload placeholder network config from `secrets.example.py`.
-Optional secrets `DEVICE_POLL_TOKEN` and `OTA_TOKEN` are also injected when
+Optional secrets `STATE_POLL_TOKEN` and `OTA_TOKEN` are also injected when
 present. The legacy `DEVICE_TOKEN` secret name is still accepted as a fallback.
 
 First-time OTA provisioning still needs USB because the board must already have
@@ -423,7 +423,7 @@ Set the relay fields and the Cloudflare OTA proxy manifest URL in
 
 ```python
 STATE_URL = "http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/device/state"
-DEVICE_POLL_TOKEN = ""
+STATE_POLL_TOKEN = ""
 OTA_MANIFEST_URL = "http://zoom-led-room-light.connor-zoom-led-room-light.workers.dev/ota/manifest.json"
 OTA_TOKEN = ""
 OTA_CONFIG_KEY = "long-random-shared-key"

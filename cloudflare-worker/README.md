@@ -2,7 +2,7 @@
 
 Cloud relay for the Pico W polling mode. Zoom webhook secrets live in
 Cloudflare Worker secrets; the Pico stores only Wi-Fi credentials, the
-`STATE_URL`, and optionally a low-privilege `DEVICE_POLL_TOKEN`.
+`STATE_URL`, and optionally a low-privilege `STATE_POLL_TOKEN`.
 
 Current deployment:
 
@@ -66,7 +66,7 @@ Copy the generated `id` values into `wrangler.toml`.
 
 Set Worker secrets. Use the same Zoom webhook secret token shown in the Zoom
 app for live meeting started/ended events. Use Microsoft Graph application
-credentials for schedule polling, and make `DEVICE_POLL_TOKEN` a random
+credentials for schedule polling, and make `STATE_POLL_TOKEN` a random
 low-privilege value if you want the Pico polling endpoint protected.
 
 ```bash
@@ -75,7 +75,7 @@ npx wrangler secret put MICROSOFT_TENANT_ID
 npx wrangler secret put MICROSOFT_CLIENT_ID
 npx wrangler secret put MICROSOFT_CLIENT_SECRET
 npx wrangler secret put MICROSOFT_CALENDAR_USER_ID
-npx wrangler secret put DEVICE_POLL_TOKEN
+npx wrangler secret put STATE_POLL_TOKEN
 npx wrangler secret put ADMIN_TOKEN
 ```
 
@@ -182,23 +182,23 @@ Replace `$RELAY` and `$ADMIN_TOKEN` locally:
 ```bash
 RELAY=https://zoom-led-room-light.<your-subdomain>.workers.dev
 ADMIN_TOKEN=...
-DEVICE_POLL_TOKEN=...
+STATE_POLL_TOKEN=...
 ```
 
 Simulate each Pico command:
 
 ```bash
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/upcoming?minutes=5"
-curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $STATE_POLL_TOKEN" "$RELAY/device/state"
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/start"
-curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $STATE_POLL_TOKEN" "$RELAY/device/state"
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/ending-soon?minutes=5"
-curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $STATE_POLL_TOKEN" "$RELAY/device/state"
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/end"
-curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $STATE_POLL_TOKEN" "$RELAY/device/state"
 ```
 
 From the repository root, the compatibility stub CLI maps the old command
@@ -211,14 +211,14 @@ ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py st
 ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py status free
 ```
 
-If `DEVICE_POLL_TOKEN` is unset in Cloudflare, omit the `Authorization` header when
+If `STATE_POLL_TOKEN` is unset in Cloudflare, omit the `Authorization` header when
 reading `/device/state`.
 
 Force one schedule poll:
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/schedule/check"
-curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $STATE_POLL_TOKEN" "$RELAY/device/state"
 ```
 
 ## Update The Pico
@@ -227,7 +227,7 @@ In `/Users/connor/Documents/Hackathon/rp2-zoom-leds/device/secrets.py`, set:
 
 ```python
 STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
-DEVICE_POLL_TOKEN = "same-low-privilege-poll-token-if-configured"
+STATE_POLL_TOKEN = "same-low-privilege-poll-token-if-configured"
 OTA_MANIFEST_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/ota/manifest.json"
 OTA_TOKEN = ""
 ```
