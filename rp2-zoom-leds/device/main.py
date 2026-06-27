@@ -29,9 +29,17 @@ except ImportError:
     promote_connected_profile = None
 
 try:
-    from ota_client import check_for_update
+    from ota_client import (
+        check_for_update,
+        confirm_trial_boot,
+        rollback_trial_update,
+        trial_update_running,
+    )
 except Exception:
     check_for_update = None
+    confirm_trial_boot = None
+    rollback_trial_update = None
+    trial_update_running = None
 
 try:
     from ota_config import check_for_config_update, config_url_from_manifest_url
@@ -57,6 +65,20 @@ except Exception:
 WATCHDOG_RESET_MARKER = "network_watchdog_reset.flag"
 OTA_CONFIG_CHECK_MARKER = "ota_config_check.flag"
 STATE_REQUEST_MARKER = "state_request.flag"
+
+OTA_TRIAL_STEP_MS = 350
+OTA_TRIAL_COMMANDS = (
+    {"mode": "off"},
+    {"mode": "solid", "rgb": [255, 255, 255]},
+    {"mode": "pulse", "rgb": [0, 120, 255], "speed": 0.8},
+    {"mode": "meeting", "active": False, "participants": 0},
+    {"mode": "meeting", "active": True, "participants": 1},
+    {"mode": "meeting", "active": True, "participants": 4},
+    {"mode": "meeting", "active": True, "participants": 8},
+    {"mode": "meeting_status", "state": "starting_soon", "minutes": 5},
+    {"mode": "meeting_status", "state": "in_progress"},
+    {"mode": "meeting_status", "state": "ending_soon", "minutes": 2},
+)
 
 
 def _sleep_ms(delay_ms):
@@ -235,6 +257,7 @@ def main():
         incomplete_state_request_boot=incomplete_state_request_boot,
         watchdog_reset_cause_boot=watchdog_reset_cause_boot,
     )
+    run_ota_trial_if_needed(strip, status, telemetry)
     network_reader = NetworkCommandReader(telemetry)
     startup_command = None
     if watchdog_reset_boot:
@@ -322,6 +345,43 @@ def _play_command_sequence(strip, status, telemetry, commands, step_ms, source):
 
         started = time.ticks_ms()
         while time.ticks_diff(time.ticks_ms(), started) < step_ms:
+            strip.tick()
+            if not strip.available:
+                status.tick_heartbeat(config.STATUS_BLINK_MS)
+            _sleep_ms(config.LOOP_DELAY_MS)
+
+
+def run_ota_trial_if_needed(strip, status, telemetry):
+    if trial_update_running is None or not trial_update_running():
+        return
+
+    telemetry.log(
+        "ota_trial_self_test_start",
+        steps=len(OTA_TRIAL_COMMANDS),
+        step_ms=OTA_TRIAL_STEP_MS,
+    )
+    try:
+        _run_ota_trial_self_test(strip, status, telemetry)
+        if confirm_trial_boot is not None:
+            result = confirm_trial_boot()
+        else:
+            result = "unavailable"
+        telemetry.log("ota_trial_self_test_done", result=result)
+    except Exception as exc:
+        telemetry.log("ota_trial_self_test_error", error=str(exc))
+        if rollback_trial_update is not None:
+            rollback_trial_update("self_test_failed", reset=True)
+        raise
+
+
+def _run_ota_trial_self_test(strip, status, telemetry):
+    for command in OTA_TRIAL_COMMANDS:
+        ok = apply_command(strip, status, command, telemetry, "ota_trial")
+        if not ok:
+            raise RuntimeError("OTA trial lighting command failed")
+
+        started = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), started) < OTA_TRIAL_STEP_MS:
             strip.tick()
             if not strip.available:
                 status.tick_heartbeat(config.STATUS_BLINK_MS)

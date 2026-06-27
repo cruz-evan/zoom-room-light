@@ -148,6 +148,133 @@ def test_ota_applies_file_diff_when_manifest_build_is_newer(monkeypatch, tmp_pat
     assert requests.urls == [manifest_url, file_url]
     assert (tmp_path / "main.py").read_bytes() == new_content
     state = json.loads((tmp_path / module.STATE_FILE).read_text(encoding="utf-8"))
+    assert state["status"] == module.TRIAL_PENDING
     assert state["build_epoch_utc"] == 101
     assert state["version"] == "test-version"
+    assert state["changed_files"] == [
+        {
+            "path": "main.py",
+            "had_existing": True,
+            "size": len(new_content),
+            "sha256": hashlib.sha256(new_content).hexdigest(),
+        }
+    ]
+    assert (tmp_path / "main.py.bak").read_bytes() == b"older usb build\n"
     assert module.time.sleeps == [250]
+
+
+def test_prepare_trial_boot_marks_candidate_running(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    module = load_ota_client(monkeypatch, FakeRequests({}), installed_build_epoch=100)
+    state = {
+        "status": module.TRIAL_PENDING,
+        "version": "test-version",
+        "build_epoch_utc": 101,
+        "files": [],
+        "changed_files": [],
+        "trial_boots": 0,
+    }
+    (tmp_path / module.STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
+
+    assert module.prepare_trial_boot() == "running"
+
+    updated = json.loads((tmp_path / module.STATE_FILE).read_text(encoding="utf-8"))
+    assert updated["status"] == module.TRIAL_RUNNING
+    assert updated["trial_boots"] == 1
+
+
+def test_confirm_trial_boot_removes_backups_and_marks_confirmed(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    content = b"newer ota build\n"
+    module = load_ota_client(monkeypatch, FakeRequests({}), installed_build_epoch=101)
+    (tmp_path / "main.py").write_bytes(content)
+    (tmp_path / "main.py.bak").write_bytes(b"older usb build\n")
+    state = {
+        "status": module.TRIAL_RUNNING,
+        "version": "test-version",
+        "build_epoch_utc": 101,
+        "files": [
+            {
+                "path": "main.py",
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ],
+        "changed_files": [{"path": "main.py", "had_existing": True}],
+        "trial_boots": 1,
+    }
+    (tmp_path / module.STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
+
+    assert module.confirm_trial_boot() == "confirmed"
+
+    assert not (tmp_path / "main.py.bak").exists()
+    state = json.loads((tmp_path / module.STATE_FILE).read_text(encoding="utf-8"))
+    assert state["status"] == module.CONFIRMED
+    assert state["version"] == "test-version"
+
+
+def test_interrupted_trial_rolls_back_and_marks_version_bad(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    module = load_ota_client(monkeypatch, FakeRequests({}), installed_build_epoch=101)
+    (tmp_path / "main.py").write_bytes(b"newer ota build\n")
+    (tmp_path / "main.py.bak").write_bytes(b"older usb build\n")
+    previous_state = {
+        "status": module.CONFIRMED,
+        "version": "old-version",
+        "build_epoch_utc": 100,
+        "files": [],
+    }
+    state = {
+        "status": module.TRIAL_RUNNING,
+        "version": "bad-version",
+        "build_epoch_utc": 101,
+        "files": [],
+        "changed_files": [{"path": "main.py", "had_existing": True}],
+        "previous_state": previous_state,
+    }
+    (tmp_path / module.STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
+
+    assert module.rollback_trial_update("trial_interrupted") == "rolled_back"
+
+    assert (tmp_path / "main.py").read_bytes() == b"older usb build\n"
+    assert not (tmp_path / "main.py.bak").exists()
+    state = json.loads((tmp_path / module.STATE_FILE).read_text(encoding="utf-8"))
+    assert state == previous_state
+    bad = json.loads((tmp_path / module.BAD_VERSIONS_FILE).read_text(encoding="utf-8"))
+    assert bad["bad"] == [
+        {
+            "version": "bad-version",
+            "build_epoch_utc": 101,
+            "reason": "trial_interrupted",
+        }
+    ]
+
+
+def test_bad_version_is_not_downloaded_again(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "main.py").write_bytes(b"older usb build\n")
+    manifest_url = "https://ota.test/manifest.json"
+    file_url = "https://ota.test/main.py"
+    new_content = b"newer ota build\n"
+    requests = FakeRequests(
+        {
+            manifest_url: FakeResponse(
+                json_data=manifest_for(
+                    "main.py",
+                    new_content,
+                    build_epoch_utc=101,
+                    version="bad-version",
+                    url=file_url,
+                )
+            ),
+            file_url: AssertionError("bad OTA version should not download firmware files"),
+        }
+    )
+    module = load_ota_client(monkeypatch, requests, installed_build_epoch=100)
+    (tmp_path / module.BAD_VERSIONS_FILE).write_text(
+        json.dumps({"bad": [{"version": "bad-version"}]}),
+        encoding="utf-8",
+    )
+
+    assert module.check_for_update(manifest_url) == "bad"
+    assert requests.urls == [manifest_url]

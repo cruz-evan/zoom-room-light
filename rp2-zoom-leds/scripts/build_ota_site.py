@@ -11,7 +11,8 @@ from urllib.parse import quote
 
 
 BUILD_INFO_FILE = "build_info.py"
-EXCLUDED_DEVICE_FILES = {"secrets.py", "secrets.example.py", BUILD_INFO_FILE}
+RECOVERY_CORE_FILES = {"boot.py", "ota_client.py"}
+EXCLUDED_DEVICE_FILES = {"secrets.py", "secrets.example.py", BUILD_INFO_FILE, *RECOVERY_CORE_FILES}
 
 
 def discover_device_files(device_dir):

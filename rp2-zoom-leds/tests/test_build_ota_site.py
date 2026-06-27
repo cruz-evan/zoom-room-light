@@ -23,6 +23,8 @@ def test_build_ota_site_excludes_secret_files(tmp_path):
 
     (device_dir / "main.py").write_text("print('main')\n", encoding="utf-8")
     (device_dir / "led_strip.py").write_text("LED_COUNT = 144\n", encoding="utf-8")
+    (device_dir / "boot.py").write_text("# recovery core\n", encoding="utf-8")
+    (device_dir / "ota_client.py").write_text("# recovery core\n", encoding="utf-8")
     (device_dir / "secrets.py").write_text("WIFI_PASSWORD = 'nope'\n", encoding="utf-8")
     (device_dir / "secrets.example.py").write_text("WIFI_PASSWORD = ''\n", encoding="utf-8")
 
@@ -36,6 +38,8 @@ def test_build_ota_site_excludes_secret_files(tmp_path):
 
     paths = [item["path"] for item in manifest["files"]]
     assert paths == ["build_info.py", "led_strip.py", "main.py"]
+    assert not (output_dir / "firmware" / "abc123" / "boot.py").exists()
+    assert not (output_dir / "firmware" / "abc123" / "ota_client.py").exists()
     assert not (output_dir / "firmware" / "abc123" / "secrets.py").exists()
     assert not (output_dir / "firmware" / "abc123" / "secrets.example.py").exists()
 

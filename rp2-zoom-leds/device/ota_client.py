@@ -34,7 +34,15 @@ except ImportError:
 
 
 STATE_FILE = "ota_state.json"
-EXCLUDED_PATHS = ("secrets.py", "secrets.example.py")
+BAD_VERSIONS_FILE = "ota_bad.json"
+EXCLUDED_PATHS = ("secrets.py", "secrets.example.py", "boot.py", "ota_client.py")
+TRIAL_COMMIT = "trial_commit"
+TRIAL_PENDING = "trial_pending"
+TRIAL_RUNNING = "trial_running"
+CONFIRMED = "confirmed"
+MAX_TRIAL_BOOTS = 1
+MAX_BAD_VERSIONS = 8
+MIN_FREE_AFTER_OTA_BYTES = 64 * 1024
 
 
 class OtaError(RuntimeError):
@@ -49,6 +57,9 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
 
     if not version:
         raise OtaError("manifest is missing version")
+    if _is_bad_version(version):
+        print("OTA version is marked bad; skipping:", version)
+        return "bad"
 
     pending = []
     for file_info in files:
@@ -56,7 +67,7 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
             pending.append(file_info)
 
     if not pending:
-        _write_state(version, manifest_build_epoch, files)
+        _write_confirmed_state(version, manifest_build_epoch, files)
         return "current"
 
     installed_build_epoch = _installed_build_epoch()
@@ -70,13 +81,98 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
         return "stale"
 
     print("OTA update available:", version)
+    _ensure_free_space(pending)
     _download_pending(pending, token, max_file_bytes, timeout_seconds)
-    _commit_downloads(pending)
-    _write_state(version, manifest_build_epoch, files)
-    print("OTA update applied; resetting")
+    previous_state = _read_json(STATE_FILE, {})
+    trial_state = _trial_state(version, manifest_build_epoch, files, pending, previous_state)
+    _write_json(STATE_FILE, trial_state)
+    try:
+        _commit_downloads(pending, keep_backups=True)
+    except Exception:
+        _restore_trial_backups(trial_state)
+        _remove_trial_temps(trial_state)
+        if previous_state:
+            _write_json(STATE_FILE, previous_state)
+        else:
+            _remove_if_exists(STATE_FILE)
+        raise
+    trial_state["status"] = TRIAL_PENDING
+    trial_state["trial_boots"] = 0
+    _write_json(STATE_FILE, trial_state)
+    print("OTA update staged for trial; resetting")
     time.sleep_ms(250)
     machine.reset()
-    return "applied"
+    return "trial"
+
+
+def prepare_trial_boot():
+    state = _read_json(STATE_FILE, {})
+    status = state.get("status")
+    if status == TRIAL_RUNNING:
+        return rollback_trial_update("trial_interrupted", reset=True)
+    if status == TRIAL_COMMIT:
+        return rollback_trial_update("commit_interrupted", reset=True)
+    if status != TRIAL_PENDING:
+        return "none"
+
+    trial_boots = _as_int(state.get("trial_boots"), 0) + 1
+    if trial_boots > MAX_TRIAL_BOOTS:
+        return rollback_trial_update("trial_boot_limit", reset=True)
+
+    state["trial_boots"] = trial_boots
+    state["status"] = TRIAL_RUNNING
+    _write_json(STATE_FILE, state)
+    return "running"
+
+
+def trial_update_running():
+    state = _read_json(STATE_FILE, {})
+    return state.get("status") == TRIAL_RUNNING
+
+
+def confirm_trial_boot():
+    state = _read_json(STATE_FILE, {})
+    if state.get("status") not in (TRIAL_PENDING, TRIAL_RUNNING):
+        return "none"
+
+    files = state.get("files") or ()
+    for file_info in files:
+        if not _installed_matches(file_info):
+            return rollback_trial_update("candidate_hash_mismatch", reset=True)
+
+    _remove_trial_backups(state)
+    _remove_trial_temps(state)
+    _write_confirmed_state(
+        str(state.get("version") or ""),
+        _as_int(state.get("build_epoch_utc"), 0),
+        files,
+    )
+    return "confirmed"
+
+
+def rollback_trial_update(reason="trial_failed", reset=False):
+    state = _read_json(STATE_FILE, {})
+    if state.get("status") not in (TRIAL_COMMIT, TRIAL_PENDING, TRIAL_RUNNING):
+        return "none"
+
+    _restore_trial_backups(state)
+    _remove_trial_temps(state)
+    try:
+        _mark_bad_version(state, reason)
+    except Exception:
+        pass
+    previous_state = state.get("previous_state")
+    if isinstance(previous_state, dict) and previous_state:
+        previous_state["status"] = CONFIRMED
+        _write_json(STATE_FILE, previous_state)
+    else:
+        _remove_if_exists(STATE_FILE)
+
+    if reset:
+        print("OTA trial rolled back; resetting:", reason)
+        time.sleep_ms(250)
+        machine.reset()
+    return "rolled_back"
 
 
 def _fetch_json(url, token, timeout_seconds=8):
@@ -221,7 +317,7 @@ def _download_pending(files, token, max_file_bytes, timeout_seconds=8):
             gc.collect()
 
 
-def _commit_downloads(files):
+def _commit_downloads(files, keep_backups=False):
     committed = []
     ordered = list(files)
     ordered.sort(key=lambda file_info: _commit_rank(file_info["path"]))
@@ -249,9 +345,63 @@ def _commit_downloads(files):
         _restore_backups(committed)
         raise OtaError("could not commit update: %s" % exc)
 
-    for path, had_existing in committed:
-        if had_existing:
+    if not keep_backups:
+        for path, had_existing in committed:
+            if had_existing:
+                _remove_if_exists(_backup_name(path))
+
+
+def _trial_state(version, build_epoch_utc, files, pending, previous_state):
+    changed_files = []
+    for file_info in pending:
+        path = file_info["path"]
+        changed_files.append(
+            {
+                "path": path,
+                "had_existing": _exists(path),
+                "size": file_info["size"],
+                "sha256": file_info["sha256"],
+            }
+        )
+    state = {
+        "status": TRIAL_COMMIT,
+        "version": version,
+        "build_epoch_utc": build_epoch_utc,
+        "files": [
+            {"path": item["path"], "sha256": item["sha256"], "size": item["size"]}
+            for item in files
+        ],
+        "changed_files": changed_files,
+        "trial_boots": 0,
+    }
+    if isinstance(previous_state, dict) and previous_state:
+        state["previous_state"] = previous_state
+    return state
+
+
+def _restore_trial_backups(state):
+    changed_files = state.get("changed_files") or ()
+    for item in reversed(changed_files):
+        path = item.get("path")
+        if not path:
+            continue
+        _remove_if_exists(path)
+        if item.get("had_existing") and _exists(_backup_name(path)):
+            os.rename(_backup_name(path), path)
+
+
+def _remove_trial_backups(state):
+    for item in state.get("changed_files") or ():
+        path = item.get("path")
+        if path:
             _remove_if_exists(_backup_name(path))
+
+
+def _remove_trial_temps(state):
+    for item in state.get("changed_files") or ():
+        path = item.get("path")
+        if path:
+            _remove_if_exists(_temp_name(path))
 
 
 def _commit_rank(path):
@@ -271,14 +421,86 @@ def _restore_backups(committed):
             os.rename(_backup_name(path), path)
 
 
-def _write_state(version, build_epoch_utc, files):
+def _write_confirmed_state(version, build_epoch_utc, files):
     state = {
+        "status": CONFIRMED,
         "version": version,
         "build_epoch_utc": build_epoch_utc,
-        "files": [{"path": item["path"], "sha256": item["sha256"]} for item in files],
+        "files": [
+            {"path": item["path"], "sha256": item["sha256"], "size": item["size"]}
+            for item in files
+        ],
     }
-    with open(STATE_FILE, "w") as handle:
-        handle.write(json.dumps(state))
+    _write_json(STATE_FILE, state)
+
+
+def _is_bad_version(version):
+    if not version:
+        return False
+    bad = _read_json(BAD_VERSIONS_FILE, {})
+    for item in bad.get("bad", ()):
+        if item.get("version") == version:
+            return True
+    return False
+
+
+def _mark_bad_version(state, reason):
+    version = str(state.get("version") or "")
+    if not version:
+        return
+    bad = _read_json(BAD_VERSIONS_FILE, {})
+    entries = []
+    for item in bad.get("bad", ()):
+        if item.get("version") != version:
+            entries.append(item)
+    entries.append(
+        {
+            "version": version,
+            "build_epoch_utc": _as_int(state.get("build_epoch_utc"), 0),
+            "reason": str(reason or "unknown"),
+        }
+    )
+    if len(entries) > MAX_BAD_VERSIONS:
+        entries = entries[-MAX_BAD_VERSIONS:]
+    _write_json(BAD_VERSIONS_FILE, {"bad": entries})
+
+
+def _ensure_free_space(files):
+    try:
+        stat = os.statvfs("/")
+        free_bytes = int(stat[0]) * int(stat[3])
+    except Exception:
+        return
+
+    new_bytes = 0
+    backup_bytes = 0
+    for file_info in files:
+        new_bytes += int(file_info["size"])
+        path = file_info["path"]
+        if _exists(path):
+            try:
+                backup_bytes += _file_size(path)
+            except OSError:
+                pass
+    required = new_bytes + backup_bytes + MIN_FREE_AFTER_OTA_BYTES
+    if free_bytes < required:
+        raise OtaError("not enough free storage for rollback-safe OTA")
+
+
+def _read_json(path, default):
+    try:
+        with open(path, "r") as handle:
+            return json.loads(handle.read())
+    except Exception:
+        return default
+
+
+def _write_json(path, value):
+    temp = path + ".new"
+    with open(temp, "w") as handle:
+        handle.write(json.dumps(value))
+    _remove_if_exists(path)
+    os.rename(temp, path)
 
 
 def _file_sha256(path):
