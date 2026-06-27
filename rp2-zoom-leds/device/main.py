@@ -907,6 +907,7 @@ class NetworkCommandReader:
                 getattr(config, "OTA_TOKEN", ""),
                 getattr(config, "OTA_MAX_FILE_BYTES", 65536),
                 timeout_seconds,
+                self.telemetry,
             )
             self.telemetry.log(
                 "ota_app_check_done",

@@ -52,17 +52,41 @@ class OtaError(RuntimeError):
     pass
 
 
-def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_seconds=8):
+def check_for_update(
+    manifest_url,
+    token="",
+    max_file_bytes=65536,
+    timeout_seconds=8,
+    telemetry=None,
+):
+    manifest_started = _ticks_ms()
+    _log_telemetry(telemetry, "ota_pretrial_manifest_fetch_start")
     manifest = _fetch_json(manifest_url, token, timeout_seconds)
     version = str(manifest.get("version") or "")
     manifest_build_epoch = _manifest_build_epoch(manifest)
     files = _manifest_files(manifest)
+    _log_telemetry(
+        telemetry,
+        "ota_pretrial_manifest_fetch_done",
+        version=version,
+        build_epoch_utc=manifest_build_epoch,
+        file_count=len(files),
+        elapsed_ms=_elapsed_ms(manifest_started),
+    )
 
     if not version:
         raise OtaError("manifest is missing version")
     _remove_download_temps(files)
     if _is_bad_version(version):
         print("OTA version is marked bad; skipping:", version)
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_decision",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            status="bad",
+            pending_count=0,
+        )
         return "bad"
 
     pending = []
@@ -73,6 +97,15 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
     if not pending:
         _clear_pretrial_failure(version)
         _write_confirmed_state(version, manifest_build_epoch, files)
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_decision",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            status="current",
+            pending_count=0,
+            total_file_count=len(files),
+        )
         return "current"
 
     installed_build_epoch = _installed_build_epoch()
@@ -83,19 +116,87 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
             "<=",
             installed_build_epoch,
         )
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_decision",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            installed_build_epoch=installed_build_epoch,
+            status="stale",
+            pending_count=len(pending),
+            total_file_count=len(files),
+        )
         return "stale"
 
     print("OTA update available:", version)
+    _log_telemetry(
+        telemetry,
+        "ota_pretrial_decision",
+        version=version,
+        build_epoch_utc=manifest_build_epoch,
+        installed_build_epoch=installed_build_epoch,
+        status="update_available",
+        pending_count=len(pending),
+        total_file_count=len(files),
+        pending_bytes=_sum_file_sizes(pending),
+    )
     previous_state = None
     trial_state = None
+    phase = "space_check"
     try:
-        _ensure_free_space(pending)
-        _download_pending(pending, token, max_file_bytes, timeout_seconds)
+        space = _ensure_free_space(pending)
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_space_check_done",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            **space
+        )
+        phase = "download"
+        _download_pending(pending, token, max_file_bytes, timeout_seconds, telemetry)
         previous_state = _read_json(STATE_FILE, {})
         trial_state = _trial_state(version, manifest_build_epoch, files, pending, previous_state)
+        phase = "state_write_commit"
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_state_write_start",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            status=TRIAL_COMMIT,
+        )
         _write_json(STATE_FILE, trial_state)
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_state_write_done",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            status=TRIAL_COMMIT,
+        )
+        phase = "commit"
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_commit_start",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            pending_count=len(pending),
+        )
         _commit_downloads(pending, keep_backups=True)
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_commit_done",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            pending_count=len(pending),
+        )
     except Exception as exc:
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_error",
+            version=version,
+            build_epoch_utc=manifest_build_epoch,
+            phase=phase,
+            error=_short_error(exc),
+        )
         _remove_download_temps(pending)
         if trial_state is not None:
             _restore_trial_backups(trial_state)
@@ -104,14 +205,37 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
             else:
                 _remove_if_exists(STATE_FILE)
         try:
-            _record_pretrial_failure(version, manifest_build_epoch, str(exc))
+            failure = _record_pretrial_failure(version, manifest_build_epoch, str(exc))
+            _log_telemetry(
+                telemetry,
+                "ota_pretrial_failure_recorded",
+                version=version,
+                build_epoch_utc=manifest_build_epoch,
+                count=failure.get("count", 0),
+                marked_bad=bool(failure.get("marked_bad", False)),
+            )
         except Exception:
             pass
         raise
     _clear_pretrial_failure(version)
     trial_state["status"] = TRIAL_PENDING
     trial_state["trial_boots"] = 0
+    _log_telemetry(
+        telemetry,
+        "ota_pretrial_state_write_start",
+        version=version,
+        build_epoch_utc=manifest_build_epoch,
+        status=TRIAL_PENDING,
+    )
     _write_json(STATE_FILE, trial_state)
+    _log_telemetry(
+        telemetry,
+        "ota_pretrial_staged",
+        version=version,
+        build_epoch_utc=manifest_build_epoch,
+        status=TRIAL_PENDING,
+        pending_count=len(pending),
+    )
     print("OTA update staged for trial; resetting")
     time.sleep_ms(250)
     machine.reset()
@@ -311,11 +435,21 @@ def _installed_matches(file_info):
         return False
 
 
-def _download_pending(files, token, max_file_bytes, timeout_seconds=8):
-    for file_info in files:
+def _download_pending(files, token, max_file_bytes, timeout_seconds=8, telemetry=None):
+    total = len(files)
+    for index, file_info in enumerate(files, 1):
         if file_info["size"] > max_file_bytes:
             raise OtaError("manifest file is too large")
 
+        started = _ticks_ms()
+        _log_telemetry(
+            telemetry,
+            "ota_pretrial_file_download_start",
+            path=file_info["path"],
+            index=index,
+            total=total,
+            size=file_info["size"],
+        )
         content = _fetch_bytes(file_info["url"], token, timeout_seconds)
         try:
             if len(content) != file_info["size"]:
@@ -325,6 +459,15 @@ def _download_pending(files, token, max_file_bytes, timeout_seconds=8):
 
             with open(_temp_name(file_info["path"]), "wb") as handle:
                 handle.write(content)
+            _log_telemetry(
+                telemetry,
+                "ota_pretrial_file_download_done",
+                path=file_info["path"],
+                index=index,
+                total=total,
+                size=file_info["size"],
+                elapsed_ms=_ticks_diff(_ticks_ms(), started),
+            )
         finally:
             content = None
             gc.collect()
@@ -507,11 +650,14 @@ def _record_pretrial_failure(version, build_epoch_utc, error):
         entries = entries[-MAX_PRETRIAL_FAILURE_RECORDS:]
     _write_json(PRETRIAL_FAILURES_FILE, {"failures": entries})
 
+    marked_bad = False
     if count >= MAX_PRETRIAL_FAILURES:
         _mark_bad_version(
             {"version": version, "build_epoch_utc": build_epoch_utc},
             "pretrial_failure",
         )
+        marked_bad = True
+    return {"count": count, "marked_bad": marked_bad}
 
 
 def _clear_pretrial_failure(version):
@@ -532,16 +678,9 @@ def _clear_pretrial_failure(version):
 
 
 def _ensure_free_space(files):
-    try:
-        stat = os.statvfs("/")
-        free_bytes = int(stat[0]) * int(stat[3])
-    except Exception:
-        return
-
-    new_bytes = 0
+    new_bytes = _sum_file_sizes(files)
     backup_bytes = 0
     for file_info in files:
-        new_bytes += int(file_info["size"])
         path = file_info["path"]
         if _exists(path):
             try:
@@ -549,8 +688,34 @@ def _ensure_free_space(files):
             except OSError:
                 pass
     required = new_bytes + backup_bytes + MIN_FREE_AFTER_OTA_BYTES
+
+    try:
+        stat = os.statvfs("/")
+        free_bytes = int(stat[0]) * int(stat[3])
+    except Exception:
+        return {
+            "checked": False,
+            "pending_bytes": new_bytes,
+            "backup_bytes": backup_bytes,
+            "required_bytes": required,
+        }
+
     if free_bytes < required:
         raise OtaError("not enough free storage for rollback-safe OTA")
+    return {
+        "checked": True,
+        "free_bytes": free_bytes,
+        "pending_bytes": new_bytes,
+        "backup_bytes": backup_bytes,
+        "required_bytes": required,
+    }
+
+
+def _sum_file_sizes(files):
+    total = 0
+    for file_info in files or ():
+        total += int(file_info.get("size", 0))
+    return total
 
 
 def _read_json(path, default):
@@ -622,3 +787,38 @@ def _as_int(value, default):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _log_telemetry(telemetry, event, **fields):
+    if telemetry is None:
+        return
+    try:
+        telemetry.log(event, **fields)
+    except Exception:
+        pass
+
+
+def _ticks_ms():
+    try:
+        return time.ticks_ms()
+    except Exception:
+        pass
+    try:
+        return int(time.time() * 1000)
+    except Exception:
+        return 0
+
+
+def _ticks_diff(end, start):
+    try:
+        return time.ticks_diff(end, start)
+    except Exception:
+        return int(end) - int(start)
+
+
+def _elapsed_ms(start):
+    return _ticks_diff(_ticks_ms(), start)
+
+
+def _short_error(exc):
+    return str(exc or "unknown")[:96]

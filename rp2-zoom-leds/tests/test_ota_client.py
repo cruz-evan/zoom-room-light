@@ -48,6 +48,14 @@ class FakeTime:
         self.sleeps.append(milliseconds)
 
 
+class FakeTelemetry:
+    def __init__(self):
+        self.events = []
+
+    def log(self, event, **fields):
+        self.events.append((event, fields))
+
+
 def load_ota_client(monkeypatch, requests, *, installed_build_epoch):
     device_dir = PROJECT_ROOT / "device"
     module_name = "ota_client_under_test"
@@ -154,9 +162,10 @@ def test_ota_applies_file_diff_when_manifest_build_is_newer(monkeypatch, tmp_pat
         }
     )
     module = load_ota_client(monkeypatch, requests, installed_build_epoch=100)
+    telemetry = FakeTelemetry()
 
     try:
-        module.check_for_update(manifest_url)
+        module.check_for_update(manifest_url, telemetry=telemetry)
     except ResetCalled:
         pass
     else:
@@ -178,6 +187,25 @@ def test_ota_applies_file_diff_when_manifest_build_is_newer(monkeypatch, tmp_pat
     ]
     assert (tmp_path / "main.py.bak").read_bytes() == b"older usb build\n"
     assert module.time.sleeps == [250]
+    event_names = [event for event, _fields in telemetry.events]
+    assert event_names == [
+        "ota_pretrial_manifest_fetch_start",
+        "ota_pretrial_manifest_fetch_done",
+        "ota_pretrial_decision",
+        "ota_pretrial_space_check_done",
+        "ota_pretrial_file_download_start",
+        "ota_pretrial_file_download_done",
+        "ota_pretrial_state_write_start",
+        "ota_pretrial_state_write_done",
+        "ota_pretrial_commit_start",
+        "ota_pretrial_commit_done",
+        "ota_pretrial_state_write_start",
+        "ota_pretrial_staged",
+    ]
+    assert telemetry.events[2][1]["status"] == "update_available"
+    assert telemetry.events[3][1]["pending_bytes"] == len(new_content)
+    assert telemetry.events[4][1]["path"] == "main.py"
+    assert telemetry.events[-1][1]["status"] == module.TRIAL_PENDING
 
 
 def test_prepare_trial_boot_marks_candidate_running(monkeypatch, tmp_path):
@@ -323,9 +351,10 @@ def test_pretrial_download_failure_cleans_temps_and_records_failure(monkeypatch,
         }
     )
     module = load_ota_client(monkeypatch, requests, installed_build_epoch=100)
+    telemetry = FakeTelemetry()
 
     try:
-        module.check_for_update(manifest_url)
+        module.check_for_update(manifest_url, telemetry=telemetry)
     except MemoryError:
         pass
     else:
@@ -343,6 +372,22 @@ def test_pretrial_download_failure_cleans_temps_and_records_failure(monkeypatch,
         }
     ]
     assert not (tmp_path / module.BAD_VERSIONS_FILE).exists()
+    event_names = [event for event, _fields in telemetry.events]
+    assert event_names == [
+        "ota_pretrial_manifest_fetch_start",
+        "ota_pretrial_manifest_fetch_done",
+        "ota_pretrial_decision",
+        "ota_pretrial_space_check_done",
+        "ota_pretrial_file_download_start",
+        "ota_pretrial_file_download_done",
+        "ota_pretrial_file_download_start",
+        "ota_pretrial_error",
+        "ota_pretrial_failure_recorded",
+    ]
+    assert telemetry.events[-2][1]["phase"] == "download"
+    assert telemetry.events[-2][1]["error"] == "memory allocation failed"
+    assert telemetry.events[-1][1]["count"] == 1
+    assert telemetry.events[-1][1]["marked_bad"] is False
 
 
 def test_repeated_pretrial_failures_mark_version_bad(monkeypatch, tmp_path):
