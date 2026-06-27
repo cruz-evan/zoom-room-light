@@ -1,5 +1,4 @@
 import math
-import sys
 import time
 
 from machine import Pin
@@ -13,7 +12,6 @@ STARTING_SOON_BLOCK_LEDS = 7.0
 STARTING_SOON_TAIL_LEDS = 10.0
 STARTING_SOON_CYAN = (44, 213, 252)
 STARTING_SOON_BACKGROUND = (0, 2, 8)
-INTENTIONAL_TRIAL_WEDGE = True
 
 
 def _ticks_ms():
@@ -22,10 +20,6 @@ def _ticks_ms():
 
 def _ticks_diff(now, start):
     return time.ticks_diff(now, start)
-
-
-def _running_on_micropython():
-    return getattr(sys.implementation, "name", "") == "micropython"
 
 
 def _clamp_unit(value):
@@ -237,10 +231,6 @@ class LedStrip:
         return self.off(force=force)
 
     def _render_starting_soon(self, force=False):
-        if INTENTIONAL_TRIAL_WEDGE and _running_on_micropython():
-            while True:
-                pass
-
         if not self.available or self.pixels is None:
             return False
 
