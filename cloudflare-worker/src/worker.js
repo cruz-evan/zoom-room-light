@@ -1,4 +1,5 @@
 const STATE_KEY = "current-state";
+const DEVICE_STATE_PREFIX = "current-state:";
 const ZOOM_WEBHOOK_HISTORY_PREFIX = "zoom-webhook:";
 const ZOOM_WEBHOOK_HISTORY_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_POLL_SECONDS = 5;
@@ -48,17 +49,21 @@ export async function handleRequest(request, env, ctx) {
 
   const deviceId = deviceIdFromRequest(request, url, path);
   if (request.method === "GET" && deviceId !== null) {
-    if (!authorizeBearer(request, env.DEVICE_TOKEN)) {
+    if (!authorizeBearer(request, devicePollToken(env))) {
       return jsonResponse({ error: "unauthorized" }, 401);
     }
 
-    const state = await readState(env);
+    const assignment = roomAssignmentForDevice(env, deviceId);
+    const state = await readState(env, assignment ? assignment.device_id : "");
     logRelayEvent("device_state_read", {
       device_id: deviceId,
+      physical_room_name: assignment?.physical_room_name || "",
+      zoom_meeting_room_name: assignment?.zoom_meeting_room_name || "",
+      microsoft_calendar_user_id: assignment?.microsoft_calendar_user_id || "",
       poll_seconds: pollSeconds(env),
       state: logStateFields(state),
     });
-    return jsonResponse(deviceStateResponse(state, env, deviceId));
+    return jsonResponse(deviceStateResponse(state, env, deviceId, assignment));
   }
 
   if ((request.method === "GET" || request.method === "POST") && path === "/schedule/check") {
@@ -240,6 +245,18 @@ async function handleZoomWebhook(request, env, ctx, deviceId = "") {
     return jsonResponse({ error: "invalid_zoom_signature" }, 401);
   }
 
+  const assignedRoute = await handleAssignedZoomWebhook({
+    body,
+    event,
+    payload,
+    env,
+    ctx,
+    deviceId,
+  });
+  if (assignedRoute) {
+    return assignedRoute;
+  }
+
   const current = await readState(env);
   const topicFilter = zoomWebhookTopicFilter(env, deviceId);
   if (!zoomWebhookMatchesTopicFilter(payload, topicFilter)) {
@@ -314,19 +331,145 @@ async function handleZoomWebhook(request, env, ctx, deviceId = "") {
   return jsonResponse({ ok: true, state: deviceStateResponse(next, env) });
 }
 
-async function applyPostZoomEventScheduleCheck(event, state, env) {
-  if (event !== "meeting.ended" || !hasScheduleConfig(env)) {
+async function handleAssignedZoomWebhook({ body, event, payload, env, ctx, deviceId = "" }) {
+  const route = zoomWebhookAssignmentRoute(env, payload, deviceId);
+  if (!route.configured) {
+    return null;
+  }
+
+  if (route.matches.length === 0) {
+    const current = await readState(env);
+    logRelayEvent("zoom_webhook_filtered", {
+      zoom_event: event || "missing",
+      device_id: deviceId,
+      topic: String(extractMeeting(payload).topic || ""),
+      filter: route.filters,
+      current: logStateFields(current),
+    });
+    await recordZoomWebhookHistory(env, ctx, {
+      body,
+      event,
+      outcome: "filtered",
+      currentState: current,
+      responseState: current,
+      metadata: zoomWebhookFilterMetadata(payload, route.filters, false, deviceId, route.assignment || {}),
+    });
+    return jsonResponse({ ok: true, filtered: true, state: deviceStateResponse(current, env, deviceId) });
+  }
+
+  const results = [];
+  for (const assignment of route.matches) {
+    const current = await readState(env, assignment.device_id);
+    const state = stateFromZoomEvent(event, payload, env, zoomEventTimestamp(body.event_ts), current);
+    const metadata = zoomWebhookFilterMetadata(
+      payload,
+      [assignment.zoom_meeting_room_name],
+      true,
+      assignment.device_id,
+      assignment,
+    );
+
+    if (state === null) {
+      logRelayEvent("zoom_webhook_ignored", {
+        zoom_event: event || "missing",
+        device_id: assignment.device_id,
+        current: logStateFields(current),
+      });
+      await recordZoomWebhookHistory(env, ctx, {
+        body,
+        event,
+        outcome: "ignored",
+        currentState: current,
+        responseState: current,
+        metadata,
+      });
+      results.push({ assignment, outcome: "ignored", state: current });
+      continue;
+    }
+
+    if (isStaleZoomEvent(state, current)) {
+      logRelayEvent("zoom_webhook_stale", {
+        zoom_event: event || "missing",
+        device_id: assignment.device_id,
+        current_zoom_event_ts: Number(current.zoom_event_ts || 0),
+        next_zoom_event_ts: Number(state.zoom_event_ts || 0),
+        current: logStateFields(current),
+        next: logStateFields(state),
+      });
+      await recordZoomWebhookHistory(env, ctx, {
+        body,
+        event,
+        outcome: "stale",
+        currentState: current,
+        nextState: state,
+        responseState: current,
+        metadata,
+      });
+      results.push({ assignment, outcome: "stale", state: current });
+      continue;
+    }
+
+    const next = await applyPostZoomEventScheduleCheck(event, state, env, assignment);
+    await writeState(env, next, assignment.device_id);
+    await recordZoomWebhookHistory(env, ctx, {
+      body,
+      event,
+      outcome: "accepted",
+      currentState: current,
+      nextState: next,
+      responseState: next,
+      metadata,
+    });
+    logStateTransition("zoom_webhook", current, next, {
+      zoom_event: event || "missing",
+      device_id: assignment.device_id,
+      physical_room_name: assignment.physical_room_name,
+      zoom_meeting_room_name: assignment.zoom_meeting_room_name,
+      microsoft_calendar_user_id: assignment.microsoft_calendar_user_id,
+    });
+    results.push({ assignment, outcome: "accepted", state: next });
+  }
+
+  const first = results[0];
+  const response = {
+    ok: true,
+    states: results.map((result) => ({
+      outcome: result.outcome,
+      ...deviceStateResponse(result.state, env, result.assignment.device_id, result.assignment),
+    })),
+  };
+  if (first) {
+    response.state = deviceStateResponse(first.state, env, first.assignment.device_id, first.assignment);
+  }
+  if (results.every((result) => result.outcome === "ignored")) {
+    response.ignored = true;
+  }
+  if (results.every((result) => result.outcome === "stale")) {
+    response.stale = true;
+  }
+  return jsonResponse(response);
+}
+
+async function applyPostZoomEventScheduleCheck(event, state, env, assignment = null) {
+  const calendarUserId = assignment?.microsoft_calendar_user_id || "";
+  if (event !== "meeting.ended" || !hasScheduleConfig(env, calendarUserId)) {
+    return state;
+  }
+  if (assignment && !calendarUserId) {
     return state;
   }
 
   try {
     const nowMs = Date.now();
-    const meetings = await listScheduleMeetings(env, nowMs);
+    const meetings = await listScheduleMeetings(env, nowMs, calendarUserId);
     const schedule = scheduleStatusFromMeetings(meetings, state, env, nowMs);
     const next = stateFromScheduleStatus(scheduleWithoutActiveMeeting(schedule), state, env, nowMs);
 
     logRelayEvent("zoom_webhook_schedule_check", {
       zoom_event: event,
+      device_id: assignment?.device_id || "",
+      physical_room_name: assignment?.physical_room_name || "",
+      microsoft_calendar_user_id: calendarUserId,
       meeting_count: meetings.length,
       schedule: publicScheduleStatus(schedule),
       current: logStateFields(state),
@@ -336,6 +479,9 @@ async function applyPostZoomEventScheduleCheck(event, state, env) {
   } catch (error) {
     logRelayEvent("zoom_webhook_schedule_check_error", {
       zoom_event: event,
+      device_id: assignment?.device_id || "",
+      physical_room_name: assignment?.physical_room_name || "",
+      microsoft_calendar_user_id: calendarUserId,
       error: errorMessage(error),
       state: logStateFields(state),
     });
@@ -381,6 +527,7 @@ async function handleSimulate(path, request, env) {
   const minutes = minutesFromUrl(request.url);
   const now = utcNow();
   const previous = await readState(env);
+  const otaAction = action === "ota" || action === "ota-check";
   let state;
 
   if (action === "start") {
@@ -411,7 +558,7 @@ async function handleSimulate(path, request, env) {
       updatedAt: now,
       source: "simulate",
     });
-  } else if (action === "ota" || action === "ota-check") {
+  } else if (otaAction) {
     state = {
       ...previous,
       ota_check_requested_at: now,
@@ -421,6 +568,31 @@ async function handleSimulate(path, request, env) {
     };
   } else {
     return jsonResponse({ error: "not_found" }, 404);
+  }
+
+  const assignments = Object.values(roomAssignments(env));
+  if (assignments.length > 0) {
+    const states = [];
+    for (const assignment of assignments) {
+      const devicePrevious = await readState(env, assignment.device_id);
+      const deviceState = otaAction
+        ? {
+            ...devicePrevious,
+            ota_check_requested_at: now,
+            updated_at: now,
+            last_event: "simulate.ota.requested",
+            source: "simulate",
+          }
+        : state;
+      await writeState(env, deviceState, assignment.device_id);
+      logStateTransition("simulate", devicePrevious, deviceState, {
+        action,
+        device_id: assignment.device_id,
+        physical_room_name: assignment.physical_room_name,
+      });
+      states.push(deviceStateResponse(deviceState, env, assignment.device_id, assignment));
+    }
+    return jsonResponse({ ok: true, state: states[0], states });
   }
 
   await writeState(env, state);
@@ -546,9 +718,9 @@ function stateFromZoomEvent(event, payload, env, eventTs, currentState = {}) {
   return null;
 }
 
-async function readState(env) {
+async function readState(env, deviceId = "") {
   assertKv(env);
-  const stored = await env.STATE_KV.get(STATE_KEY, "json");
+  const stored = await env.STATE_KV.get(stateKeyForDevice(env, deviceId), "json");
   if (stored && isValidStoredState(stored)) {
     return stored;
   }
@@ -560,9 +732,17 @@ async function readState(env) {
   });
 }
 
-async function writeState(env, state) {
+async function writeState(env, state, deviceId = "") {
   assertKv(env);
-  await env.STATE_KV.put(STATE_KEY, JSON.stringify(state));
+  await env.STATE_KV.put(stateKeyForDevice(env, deviceId), JSON.stringify(state));
+}
+
+function stateKeyForDevice(env, deviceId = "") {
+  const assignment = roomAssignmentForDevice(env, deviceId);
+  if (!assignment) {
+    return STATE_KEY;
+  }
+  return `${DEVICE_STATE_PREFIX}${assignment.device_id}`;
 }
 
 async function recordZoomWebhookHistory(env, ctx, {
@@ -637,6 +817,104 @@ function zoomWebhookDeviceIdFromRequest(url, path) {
   return decodeURIComponent(match[1]).trim();
 }
 
+function roomAssignments(env) {
+  const raw = env.PICO_ROOM_ASSIGNMENTS;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return {};
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(String(raw));
+  } catch (error) {
+    logRelayEvent("pico_room_assignments_config_error", {
+      error: errorMessage(error),
+    });
+    return {};
+  }
+
+  if (!isObject(parsed)) {
+    return {};
+  }
+
+  const assignments = {};
+  for (const [deviceId, value] of Object.entries(parsed)) {
+    const normalizedDeviceId = String(deviceId || "").trim();
+    if (!normalizedDeviceId || !isObject(value)) {
+      continue;
+    }
+    const physicalRoomName = String(
+      value.physical_room_name
+      || value.PHYSICAL_ROOM_NAME
+      || value.physicalRoomName
+      || "",
+    ).trim();
+    const zoomMeetingRoomName = String(
+      value.zoom_meeting_room_name
+      || value.ZOOM_MEETING_ROOM_NAME
+      || value.zoomMeetingRoomName
+      || "",
+    ).trim();
+    const microsoftCalendarUserId = String(
+      value.microsoft_calendar_user_id
+      || value.MICROSOFT_CALENDAR_USER_ID
+      || value.microsoftCalendarUserId
+      || "",
+    ).trim();
+    if (!zoomMeetingRoomName) {
+      continue;
+    }
+    assignments[normalizedDeviceId] = {
+      device_id: normalizedDeviceId,
+      physical_room_name: physicalRoomName,
+      zoom_meeting_room_name: zoomMeetingRoomName,
+      microsoft_calendar_user_id: microsoftCalendarUserId,
+    };
+  }
+  return assignments;
+}
+
+function roomAssignmentForDevice(env, deviceId = "") {
+  const normalizedDeviceId = String(deviceId || "").trim();
+  if (!normalizedDeviceId) {
+    return null;
+  }
+  return roomAssignments(env)[normalizedDeviceId] || null;
+}
+
+function roomAssignmentsWithCalendar(env) {
+  return Object.values(roomAssignments(env)).filter((assignment) => assignment.microsoft_calendar_user_id);
+}
+
+function zoomWebhookAssignmentRoute(env, payload, deviceId = "") {
+  const assignments = roomAssignments(env);
+  const allAssignments = Object.values(assignments);
+  if (allAssignments.length === 0) {
+    return { configured: false, matches: [], filters: [] };
+  }
+
+  const normalizedDeviceId = String(deviceId || "").trim();
+  if (normalizedDeviceId) {
+    const assignment = assignments[normalizedDeviceId] || null;
+    const filters = assignment ? [assignment.zoom_meeting_room_name] : [];
+    return {
+      configured: true,
+      assignment,
+      filters,
+      matches: assignment && zoomWebhookMatchesTopicFilter(payload, filters) ? [assignment] : [],
+    };
+  }
+
+  const matches = allAssignments.filter((assignment) => (
+    zoomWebhookMatchesTopicFilter(payload, [assignment.zoom_meeting_room_name])
+  ));
+  return {
+    configured: true,
+    filters: allAssignments.map((assignment) => assignment.zoom_meeting_room_name),
+    matches,
+  };
+}
+
 function zoomWebhookTopicFilter(env, deviceId = "") {
   const deviceFilters = zoomWebhookTopicFilterMap(env);
   const normalizedDeviceId = String(deviceId || "").trim();
@@ -684,9 +962,12 @@ function zoomWebhookMatchesTopicFilter(payload, filters) {
   return filters.some((filter) => topic.includes(filter.toLowerCase()));
 }
 
-function zoomWebhookFilterMetadata(payload, filters, matched, deviceId = "") {
+function zoomWebhookFilterMetadata(payload, filters, matched, deviceId = "", assignment = {}) {
   return {
     device_id: String(deviceId || ""),
+    physical_room_name: String(assignment.physical_room_name || ""),
+    zoom_meeting_room_name: String(assignment.zoom_meeting_room_name || ""),
+    microsoft_calendar_user_id: String(assignment.microsoft_calendar_user_id || ""),
     topic_filter_configured: filters.length > 0,
     topic_filter_matched: matched,
     topic_filter: filters,
@@ -696,8 +977,15 @@ function zoomWebhookFilterMetadata(payload, filters, matched, deviceId = "") {
 
 export async function runSchedulePoll(env, options = {}) {
   const checkedAt = utcNow();
-  const current = await readState(env);
+  const assignments = roomAssignmentsWithCalendar(env);
+  if (assignments.length > 0) {
+    return runAssignedSchedulePoll(env, assignments, {
+      ...options,
+      checkedAt,
+    });
+  }
 
+  const current = await readState(env);
   if (!hasScheduleConfig(env)) {
     logRelayEvent("schedule_poll_skipped", {
       reason: options.reason || "schedule",
@@ -756,6 +1044,102 @@ export async function runSchedulePoll(env, options = {}) {
       state: deviceStateResponse(current, env),
     };
   }
+}
+
+async function runAssignedSchedulePoll(env, assignments, options = {}) {
+  const checkedAt = options.checkedAt || utcNow();
+  const reason = options.reason || "schedule";
+  const nowMs = options.nowMs ?? Date.now();
+
+  if (!hasMicrosoftClientConfig(env)) {
+    logRelayEvent("schedule_poll_skipped", {
+      reason,
+      error: "missing_microsoft_client_config",
+      assignment_count: assignments.length,
+    });
+    return {
+      ok: false,
+      error: "missing_microsoft_client_config",
+      checked_at: checkedAt,
+      states: [],
+    };
+  }
+
+  const states = [];
+  const errors = [];
+  for (const assignment of assignments) {
+    const current = await readState(env, assignment.device_id);
+    try {
+      const meetings = await listScheduleMeetings(env, nowMs, assignment.microsoft_calendar_user_id);
+      const schedule = scheduleStatusFromMeetings(meetings, current, env, nowMs);
+      const next = stateFromScheduleStatus(schedule, current, env, nowMs);
+      const wrote = shouldWriteState(current, next);
+
+      if (wrote) {
+        await writeState(env, next, assignment.device_id);
+      }
+
+      const responseState = wrote ? next : current;
+      const state = {
+        ok: true,
+        meeting_count: meetings.length,
+        wrote,
+        schedule: publicScheduleStatus(schedule),
+        ...deviceStateResponse(responseState, env, assignment.device_id, assignment),
+      };
+      states.push(state);
+      logRelayEvent("schedule_poll", {
+        reason,
+        ok: true,
+        device_id: assignment.device_id,
+        physical_room_name: assignment.physical_room_name,
+        microsoft_calendar_user_id: assignment.microsoft_calendar_user_id,
+        meeting_count: meetings.length,
+        wrote,
+        schedule: publicScheduleStatus(schedule),
+        current: logStateFields(current),
+        next: logStateFields(next),
+        state: logStateFields(responseState),
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      errors.push({
+        device_id: assignment.device_id,
+        physical_room_name: assignment.physical_room_name,
+        microsoft_calendar_user_id: assignment.microsoft_calendar_user_id,
+        error: message,
+      });
+      states.push({
+        ok: false,
+        error: message,
+        ...deviceStateResponse(current, env, assignment.device_id, assignment),
+      });
+      logRelayEvent("schedule_poll_error", {
+        reason,
+        device_id: assignment.device_id,
+        physical_room_name: assignment.physical_room_name,
+        microsoft_calendar_user_id: assignment.microsoft_calendar_user_id,
+        error: message,
+        current: logStateFields(current),
+      });
+    }
+  }
+
+  const response = {
+    ok: errors.length === 0,
+    reason,
+    checked_at: checkedAt,
+    assignment_count: assignments.length,
+    states,
+  };
+  if (states[0]) {
+    response.state = states[0];
+  }
+  if (errors.length > 0) {
+    response.error = "schedule_poll_partial_failure";
+    response.errors = errors;
+  }
+  return response;
 }
 
 function scheduleStatusFromMeetings(meetings, currentState, env, nowMs = Date.now()) {
@@ -949,7 +1333,7 @@ function stateFromScheduleStatus(schedule, currentState, env = {}, nowMs = sched
   return currentState;
 }
 
-function deviceStateResponse(state, env, deviceId = "") {
+function deviceStateResponse(state, env, deviceId = "", assignment = null) {
   const response = {
     v: 1,
     command: normalizeCommand(state.command),
@@ -962,6 +1346,15 @@ function deviceStateResponse(state, env, deviceId = "") {
   }
   if (deviceId) {
     response.device_id = deviceId;
+  }
+  if (assignment?.physical_room_name) {
+    response.physical_room_name = assignment.physical_room_name;
+  }
+  if (assignment?.zoom_meeting_room_name) {
+    response.zoom_meeting_room_name = assignment.zoom_meeting_room_name;
+  }
+  if (assignment?.microsoft_calendar_user_id) {
+    response.microsoft_calendar_user_id = assignment.microsoft_calendar_user_id;
   }
   return response;
 }
@@ -1167,14 +1560,17 @@ async function getMicrosoftAccessToken(env) {
   return accessToken;
 }
 
-async function listScheduleMeetings(env, nowMs = Date.now()) {
+async function listScheduleMeetings(env, nowMs = Date.now(), calendarUserId = "") {
   const accessToken = await getMicrosoftAccessToken(env);
-  const events = await listMicrosoftCalendarEvents(env, accessToken, nowMs);
+  const events = await listMicrosoftCalendarEvents(env, accessToken, nowMs, calendarUserId);
   return dedupeMeetings(events.map(graphEventToMeeting).filter(Boolean));
 }
 
-async function listMicrosoftCalendarEvents(env, accessToken, nowMs) {
-  const userId = String(env.MICROSOFT_CALENDAR_USER_ID || "").trim();
+async function listMicrosoftCalendarEvents(env, accessToken, nowMs, calendarUserId = "") {
+  const userId = String(calendarUserId || env.MICROSOFT_CALENDAR_USER_ID || "").trim();
+  if (!userId) {
+    throw new Error("missing_microsoft_calendar_user_id");
+  }
   const minimumLookbackMinutes = endingSoonMinutes(env);
   const minimumLookaheadMinutes = Math.max(activeMeetingLookaheadMinutes(env), emptyRoomLookaheadMinutes(env));
   const lookbackMinutes = Math.max(
@@ -1332,12 +1728,18 @@ function shouldWriteState(currentState, nextState) {
   );
 }
 
-function hasScheduleConfig(env) {
+function hasScheduleConfig(env, calendarUserId = "") {
+  return Boolean(
+    hasMicrosoftClientConfig(env) &&
+      (calendarUserId || env.MICROSOFT_CALENDAR_USER_ID),
+  );
+}
+
+function hasMicrosoftClientConfig(env) {
   return Boolean(
     env.MICROSOFT_TENANT_ID &&
       env.MICROSOFT_CLIENT_ID &&
-      env.MICROSOFT_CLIENT_SECRET &&
-      env.MICROSOFT_CALENDAR_USER_ID,
+      env.MICROSOFT_CLIENT_SECRET,
   );
 }
 
@@ -1678,6 +2080,10 @@ function authorizeBearer(request, token) {
     return true;
   }
   return request.headers.get("Authorization") === `Bearer ${token}`;
+}
+
+function devicePollToken(env) {
+  return String(env.DEVICE_POLL_TOKEN || env.DEVICE_TOKEN || "");
 }
 
 function pollSeconds(env) {

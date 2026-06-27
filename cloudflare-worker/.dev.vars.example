@@ -2,6 +2,7 @@ ZOOM_WEBHOOK_SECRET_TOKEN=replace-with-zoom-webhook-secret-token
 # Optional comma-separated case-insensitive topic substrings. When set, all valid
 # Zoom webhooks are retained in KV history, but only matching topics update room state.
 ZOOM_WEBHOOK_TOPIC_FILTER=Cronometer Board Room's Personal Meeting Room
+PICO_ROOM_ASSIGNMENTS={"pico-e66430a64b5bb432":{"physical_room_name":"Aquarium","zoom_meeting_room_name":"Cronometer Board Room's Personal Meeting Room","microsoft_calendar_user_id":"Boardroom@cronometer.com"},"pico-e66430a64b2e5a35":{"physical_room_name":"Rainbow Room","zoom_meeting_room_name":"Rainbow Room's Personal Meeting Room","microsoft_calendar_user_id":"rainbowroom@cronometer.com"},"pico-e66430a64b2a8d32":{"physical_room_name":"JamRoom","zoom_meeting_room_name":"JamRoom's Personal Meeting Room","microsoft_calendar_user_id":"jamroom@cronometer.com"},"pico-e66430a64b749c36":{"physical_room_name":"IdeaFactory","zoom_meeting_room_name":"IdeasFactory's Personal Meeting Room","microsoft_calendar_user_id":"ideasfactory@cronometer.com"}}
 # Optional per-device filters. Keys match the webhook device_id query param or
 # /zoom/<device_id>/webhook path segment. Blank/missing entries do not filter.
 ZOOM_WEBHOOK_TOPIC_FILTERS={"board-room-a":["Board Room A"],"board-room-b":["Board Room B"]}
@@ -9,6 +10,6 @@ MICROSOFT_TENANT_ID=replace-with-azure-tenant-id
 MICROSOFT_CLIENT_ID=replace-with-azure-app-client-id
 MICROSOFT_CLIENT_SECRET=replace-with-azure-app-client-secret
 MICROSOFT_CALENDAR_USER_ID=room@example.com
-DEVICE_TOKEN=
+DEVICE_POLL_TOKEN=
 ADMIN_TOKEN=replace-with-a-random-admin-token-for-simulate-endpoints
 SCHEDULE_END_CLEAR_GRACE_MINUTES=5

@@ -500,7 +500,7 @@ def default_admin_token() -> str:
 
 
 def default_device_token() -> str:
-    return default_secret("ZOOM_ROOM_DEVICE_TOKEN", "DEVICE_TOKEN")
+    return default_secret("ZOOM_ROOM_DEVICE_TOKEN", "DEVICE_POLL_TOKEN", "DEVICE_TOKEN")
 
 
 def default_secret(*keys: str) -> str:

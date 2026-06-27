@@ -30,6 +30,7 @@ function env(overrides = {}) {
   return {
     STATE_KV: new MemoryKv(),
     ZOOM_WEBHOOK_SECRET_TOKEN: "zoom-secret",
+    DEVICE_POLL_TOKEN: "",
     DEVICE_TOKEN: "",
     ADMIN_TOKEN: "admin-token",
     POLL_SECONDS: "5",
@@ -73,13 +74,27 @@ describe("Cloudflare Worker relay", () => {
   });
 
   it("requires the optional device token when configured", async () => {
-    const secureEnv = env({ DEVICE_TOKEN: "device-token" });
+    const secureEnv = env({ DEVICE_POLL_TOKEN: "device-token" });
     const unauthorized = await worker.fetch(new Request("https://relay.test/device/state"), secureEnv);
     assert.equal(unauthorized.status, 401);
 
     const authorized = await worker.fetch(
       new Request("https://relay.test/device/state", {
         headers: { Authorization: "Bearer device-token" },
+      }),
+      secureEnv,
+    );
+    assert.equal(authorized.status, 200);
+  });
+
+  it("still accepts the legacy DEVICE_TOKEN name for polling auth", async () => {
+    const secureEnv = env({ DEVICE_TOKEN: "legacy-device-token" });
+    const unauthorized = await worker.fetch(new Request("https://relay.test/device/state"), secureEnv);
+    assert.equal(unauthorized.status, 401);
+
+    const authorized = await worker.fetch(
+      new Request("https://relay.test/device/state", {
+        headers: { Authorization: "Bearer legacy-device-token" },
       }),
       secureEnv,
     );
@@ -100,6 +115,225 @@ describe("Cloudflare Worker relay", () => {
     const body = await json(response);
     assert.equal(body.device_id, "board-room-b");
     assert.deepEqual(body.command, { mode: "off" });
+  });
+
+  it("routes org-wide Zoom webhooks to the Pico assigned to the matching room topic", async () => {
+    const relayEnv = env({
+      PICO_ROOM_ASSIGNMENTS: JSON.stringify({
+        "pico-a": {
+          PHYSICAL_ROOM_NAME: "Aquarium",
+          ZOOM_MEETING_ROOM_NAME: "Cronometer Board Room's Personal Meeting Room",
+        },
+        "pico-b": {
+          PHYSICAL_ROOM_NAME: "Rainbow Room",
+          ZOOM_MEETING_ROOM_NAME: "Rainbow Room's Personal Meeting Room",
+        },
+      }),
+    });
+
+    const response = await worker.fetch(
+      await signedZoomRequest("https://relay.test/zoom/webhook", {
+        event: "meeting.started",
+        payload: {
+          object: {
+            id: "rainbow-meeting",
+            topic: "Rainbow Room's Personal Meeting Room",
+          },
+        },
+      }),
+      relayEnv,
+    );
+    assert.equal(response.status, 200);
+    const body = await json(response);
+    assert.equal(body.state.device_id, "pico-b");
+    assert.equal(body.state.physical_room_name, "Rainbow Room");
+
+    const aquarium = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-a"), relayEnv));
+    assert.deepEqual(aquarium.command, { mode: "off" });
+    assert.equal(aquarium.physical_room_name, "Aquarium");
+
+    const rainbow = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-b"), relayEnv));
+    assert.deepEqual(rainbow.command, { mode: "meeting_status", state: "in_progress" });
+    assert.equal(rainbow.last_event, "meeting.started");
+    assert.equal(rainbow.physical_room_name, "Rainbow Room");
+    assert.equal(rainbow.zoom_meeting_room_name, "Rainbow Room's Personal Meeting Room");
+
+    assert.equal(relayEnv.STATE_KV.values.has("current-state"), false);
+    assert.equal(JSON.parse(relayEnv.STATE_KV.values.get("current-state:pico-b")).zoom_meeting_id, "rainbow-meeting");
+  });
+
+  it("uses one shared poll token for all assigned Picos", async () => {
+    const relayEnv = env({
+      DEVICE_POLL_TOKEN: "shared-poll-token",
+      PICO_ROOM_ASSIGNMENTS: JSON.stringify({
+        "pico-a": {
+          physical_room_name: "Aquarium",
+          zoom_meeting_room_name: "Cronometer Board Room's Personal Meeting Room",
+        },
+        "pico-b": {
+          physical_room_name: "Rainbow Room",
+          zoom_meeting_room_name: "Rainbow Room's Personal Meeting Room",
+        },
+      }),
+    });
+
+    for (const deviceId of ["pico-a", "pico-b"]) {
+      const response = await worker.fetch(
+        new Request(`https://relay.test/device/state?device_id=${deviceId}`, {
+          headers: { Authorization: "Bearer shared-poll-token" },
+        }),
+        relayEnv,
+      );
+      assert.equal(response.status, 200);
+      assert.equal((await json(response)).device_id, deviceId);
+    }
+  });
+
+  it("polls assigned Microsoft calendars into per-Pico state keys", async () => {
+    const relayEnv = env({
+      MICROSOFT_TENANT_ID: "assigned-calendar-tenant",
+      MICROSOFT_CLIENT_ID: "assigned-calendar-client",
+      MICROSOFT_CLIENT_SECRET: "assigned-calendar-secret",
+      PICO_ROOM_ASSIGNMENTS: JSON.stringify({
+        "pico-a": {
+          physical_room_name: "Aquarium",
+          zoom_meeting_room_name: "Cronometer Board Room's Personal Meeting Room",
+          microsoft_calendar_user_id: "Boardroom@cronometer.com",
+        },
+        "pico-b": {
+          physical_room_name: "Rainbow Room",
+          zoom_meeting_room_name: "Rainbow Room's Personal Meeting Room",
+          microsoft_calendar_user_id: "rainbowroom@cronometer.com",
+        },
+      }),
+    });
+    const nextStart = new Date(Date.now() + 14 * 60 * 1000).toISOString();
+    const nextEnd = new Date(Date.now() + 44 * 60 * 1000).toISOString();
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+
+    globalThis.fetch = async (url) => {
+      const rawUrl = String(url);
+      requestedUrls.push(rawUrl);
+      if (rawUrl === "https://login.microsoftonline.com/assigned-calendar-tenant/oauth2/v2.0/token") {
+        return new Response(JSON.stringify({ access_token: "assigned-calendar-token", expires_in: 3600 }), { status: 200 });
+      }
+      if (rawUrl.includes("https://graph.microsoft.com/v1.0/users/Boardroom%40cronometer.com/calendarView?")) {
+        return new Response(
+          JSON.stringify({
+            value: [
+              {
+                id: "aquarium-next",
+                subject: "Aquarium Next",
+                start: { dateTime: nextStart, timeZone: "UTC" },
+                end: { dateTime: nextEnd, timeZone: "UTC" },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (rawUrl.includes("https://graph.microsoft.com/v1.0/users/rainbowroom%40cronometer.com/calendarView?")) {
+        return new Response(JSON.stringify({ value: [] }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch ${rawUrl}`);
+    };
+
+    try {
+      const response = await worker.fetch(
+        new Request("https://relay.test/schedule/check", {
+          method: "POST",
+          headers: { Authorization: "Bearer admin-token" },
+        }),
+        relayEnv,
+      );
+      assert.equal(response.status, 200);
+      const body = await json(response);
+      assert.equal(body.ok, true);
+      assert.equal(body.assignment_count, 2);
+      assert.equal(body.states.length, 2);
+
+      const aquarium = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-a"), relayEnv));
+      assert.deepEqual(aquarium.command, { mode: "meeting_status", state: "starting_soon", minutes: 15 });
+      assert.equal(aquarium.microsoft_calendar_user_id, "Boardroom@cronometer.com");
+
+      const rainbow = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-b"), relayEnv));
+      assert.deepEqual(rainbow.command, { mode: "off" });
+      assert.equal(rainbow.microsoft_calendar_user_id, "rainbowroom@cronometer.com");
+      assert.equal(relayEnv.STATE_KV.values.has("current-state"), false);
+      assert.ok(requestedUrls.some((url) => url.includes("/users/Boardroom%40cronometer.com/calendarView?")));
+      assert.ok(requestedUrls.some((url) => url.includes("/users/rainbowroom%40cronometer.com/calendarView?")));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("checks the assigned Microsoft calendar after an assigned Zoom meeting ends", async () => {
+    const relayEnv = env({
+      MICROSOFT_TENANT_ID: "assigned-ended-tenant",
+      MICROSOFT_CLIENT_ID: "assigned-ended-client",
+      MICROSOFT_CLIENT_SECRET: "assigned-ended-secret",
+      PICO_ROOM_ASSIGNMENTS: JSON.stringify({
+        "pico-a": {
+          physical_room_name: "Aquarium",
+          zoom_meeting_room_name: "Cronometer Board Room's Personal Meeting Room",
+          microsoft_calendar_user_id: "Boardroom@cronometer.com",
+        },
+      }),
+    });
+    const nextStart = new Date(Date.now() + 14 * 60 * 1000).toISOString();
+    const nextEnd = new Date(Date.now() + 44 * 60 * 1000).toISOString();
+    const originalFetch = globalThis.fetch;
+    const requestedUrls = [];
+
+    globalThis.fetch = async (url) => {
+      const rawUrl = String(url);
+      requestedUrls.push(rawUrl);
+      if (rawUrl === "https://login.microsoftonline.com/assigned-ended-tenant/oauth2/v2.0/token") {
+        return new Response(JSON.stringify({ access_token: "assigned-ended-token", expires_in: 3600 }), { status: 200 });
+      }
+      if (rawUrl.includes("https://graph.microsoft.com/v1.0/users/Boardroom%40cronometer.com/calendarView?")) {
+        return new Response(
+          JSON.stringify({
+            value: [
+              {
+                id: "aquarium-next-after-ended",
+                subject: "Aquarium Next",
+                start: { dateTime: nextStart, timeZone: "UTC" },
+                end: { dateTime: nextEnd, timeZone: "UTC" },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch ${rawUrl}`);
+    };
+
+    try {
+      await worker.fetch(
+        await signedZoomRequest("https://relay.test/zoom/webhook", {
+          event: "meeting.started",
+          payload: { object: { id: "active", topic: "Cronometer Board Room's Personal Meeting Room" } },
+        }),
+        relayEnv,
+      );
+      const response = await worker.fetch(
+        await signedZoomRequest("https://relay.test/zoom/webhook", {
+          event: "meeting.ended",
+          payload: { object: { id: "active", topic: "Cronometer Board Room's Personal Meeting Room" } },
+        }),
+        relayEnv,
+      );
+      assert.equal(response.status, 200);
+
+      const aquarium = await json(await worker.fetch(new Request("https://relay.test/device/state?device_id=pico-a"), relayEnv));
+      assert.deepEqual(aquarium.command, { mode: "meeting_status", state: "starting_soon", minutes: 15 });
+      assert.equal(aquarium.last_event, "schedule.upcoming");
+      assert.ok(requestedUrls.some((url) => url.includes("/users/Boardroom%40cronometer.com/calendarView?")));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("proxies OTA manifest and rewrites firmware URLs to the request origin", async () => {

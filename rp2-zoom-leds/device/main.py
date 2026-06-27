@@ -694,7 +694,7 @@ class NetworkCommandReader:
                 try:
                     state = fetch_state(
                         config.STATE_URL,
-                        getattr(config, "DEVICE_TOKEN", ""),
+                        getattr(config, "DEVICE_POLL_TOKEN", ""),
                         getattr(config, "DEVICE_ID", ""),
                         getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
                     )
@@ -915,7 +915,7 @@ class NetworkCommandReader:
             try:
                 state = fetch_state(
                     config.STATE_URL,
-                    getattr(config, "DEVICE_TOKEN", ""),
+                    getattr(config, "DEVICE_POLL_TOKEN", ""),
                     getattr(config, "DEVICE_ID", ""),
                     getattr(config, "STATE_REQUEST_TIMEOUT_SECONDS", 4),
                 )

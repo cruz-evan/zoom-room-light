@@ -2,7 +2,7 @@
 
 Cloud relay for the Pico W polling mode. Zoom webhook secrets live in
 Cloudflare Worker secrets; the Pico stores only Wi-Fi credentials, the
-`STATE_URL`, and optionally a low-privilege `DEVICE_TOKEN`.
+`STATE_URL`, and optionally a low-privilege `DEVICE_POLL_TOKEN`.
 
 Current deployment:
 
@@ -66,7 +66,7 @@ Copy the generated `id` values into `wrangler.toml`.
 
 Set Worker secrets. Use the same Zoom webhook secret token shown in the Zoom
 app for live meeting started/ended events. Use Microsoft Graph application
-credentials for schedule polling, and make `DEVICE_TOKEN` a random
+credentials for schedule polling, and make `DEVICE_POLL_TOKEN` a random
 low-privilege value if you want the Pico polling endpoint protected.
 
 ```bash
@@ -75,7 +75,7 @@ npx wrangler secret put MICROSOFT_TENANT_ID
 npx wrangler secret put MICROSOFT_CLIENT_ID
 npx wrangler secret put MICROSOFT_CLIENT_SECRET
 npx wrangler secret put MICROSOFT_CALENDAR_USER_ID
-npx wrangler secret put DEVICE_TOKEN
+npx wrangler secret put DEVICE_POLL_TOKEN
 npx wrangler secret put ADMIN_TOKEN
 ```
 
@@ -91,27 +91,29 @@ from GitHub Pages over HTTPS and rewrites manifest firmware URLs back through
 OTA_UPSTREAM_BASE_URL=https://cruz-evan.github.io/zoom-room-light
 ```
 
-If the Zoom app receives org-wide meeting webhooks, set per-device topic filters
-with `ZOOM_WEBHOOK_TOPIC_FILTERS` and identify the target device in the webhook
-URL, for example `/zoom/board-room-a/webhook` or
-`/zoom/webhook?device_id=board-room-a`.
+If the Zoom app receives org-wide meeting webhooks, set `PICO_ROOM_ASSIGNMENTS`
+as a GitHub repository variable and deploy the Worker. The Worker uses it to
+map Zoom meeting room topics and Microsoft room calendars to per-Pico KV state
+keys.
 
 ```text
-ZOOM_WEBHOOK_TOPIC_FILTER=Cronometer Board Room's Personal Meeting Room
-ZOOM_WEBHOOK_TOPIC_FILTERS={"board-room-a":["Board Room A"],"board-room-b":["Board Room B"]}
+PICO_ROOM_ASSIGNMENTS={"pico-e66430a64b5bb432":{"physical_room_name":"Aquarium","zoom_meeting_room_name":"Cronometer Board Room's Personal Meeting Room","microsoft_calendar_user_id":"Boardroom@cronometer.com"}}
 ```
 
-All valid Zoom webhooks are still retained in seven-day KV history. Only matching
-topics update the live room state. If `ZOOM_WEBHOOK_TOPIC_FILTERS`,
-`ZOOM_WEBHOOK_TOPIC_FILTER`, or a specific device entry is missing, blank, or
-null, no topic filtering is applied for that request. `ZOOM_WEBHOOK_TOPIC_FILTER`
-is still supported as a global fallback.
+All valid Zoom webhooks are still retained in seven-day KV history. With
+`PICO_ROOM_ASSIGNMENTS` configured, only matching topics update the assigned
+Pico's `current-state:<device_id>` key. `ZOOM_WEBHOOK_TOPIC_FILTER` and
+`ZOOM_WEBHOOK_TOPIC_FILTERS` remain supported as legacy global fallbacks when
+`PICO_ROOM_ASSIGNMENTS` is blank.
 
 The scheduled poller runs every minute from the Cron Trigger in `wrangler.toml`.
-It uses Microsoft Graph client-credentials auth to read the configured calendar
-user's `calendarView`. The Worker caches only compact schedule timing metadata
-in KV state: meeting IDs/topics plus start/end timestamps. The Pico does not
-receive or cache the schedule list; it still receives only the current command.
+It uses Microsoft Graph client-credentials auth to read each assigned
+`microsoft_calendar_user_id` from `PICO_ROOM_ASSIGNMENTS`, writing each result to
+that Pico's `current-state:<device_id>` key. If no assigned calendars are
+configured, it falls back to the legacy single `MICROSOFT_CALENDAR_USER_ID`.
+The Worker caches only compact schedule timing metadata in KV state: meeting
+IDs/topics plus start/end timestamps. The Pico does not receive or cache the
+schedule list; it still receives only the current command.
 The poller then emits:
 
 ```text
@@ -180,23 +182,23 @@ Replace `$RELAY` and `$ADMIN_TOKEN` locally:
 ```bash
 RELAY=https://zoom-led-room-light.<your-subdomain>.workers.dev
 ADMIN_TOKEN=...
-DEVICE_TOKEN=...
+DEVICE_POLL_TOKEN=...
 ```
 
 Simulate each Pico command:
 
 ```bash
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/upcoming?minutes=5"
-curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/start"
-curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/ending-soon?minutes=5"
-curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/simulate/end"
-curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
 ```
 
 From the repository root, the compatibility stub CLI maps the old command
@@ -209,14 +211,14 @@ ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py st
 ZOOM_ROOM_RELAY_URL=$RELAY ADMIN_TOKEN=$ADMIN_TOKEN python3 zoom_room_stub.py status free
 ```
 
-If `DEVICE_TOKEN` is unset in Cloudflare, omit the `Authorization` header when
+If `DEVICE_POLL_TOKEN` is unset in Cloudflare, omit the `Authorization` header when
 reading `/device/state`.
 
 Force one schedule poll:
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" "$RELAY/schedule/check"
-curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$RELAY/device/state"
+curl -sS -H "Authorization: Bearer $DEVICE_POLL_TOKEN" "$RELAY/device/state"
 ```
 
 ## Update The Pico
@@ -225,7 +227,7 @@ In `/Users/connor/Documents/Hackathon/rp2-zoom-leds/device/secrets.py`, set:
 
 ```python
 STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
-DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
+DEVICE_POLL_TOKEN = "same-low-privilege-poll-token-if-configured"
 OTA_MANIFEST_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/ota/manifest.json"
 OTA_TOKEN = ""
 ```

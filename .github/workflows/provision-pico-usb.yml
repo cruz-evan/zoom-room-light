@@ -48,7 +48,7 @@ jobs:
       ROOM_ID: ${{ inputs.room_id }}
       DEVICE_HOSTNAME: ${{ inputs.device_hostname }}
       STATE_URL: ${{ vars.STATE_URL }}
-      DEVICE_TOKEN: ${{ secrets.DEVICE_TOKEN }}
+      DEVICE_POLL_TOKEN: ${{ secrets.DEVICE_POLL_TOKEN || secrets.DEVICE_TOKEN }}
       OTA_MANIFEST_URL: ${{ vars.OTA_MANIFEST_URL }}
       OTA_TOKEN: ${{ secrets.OTA_TOKEN }}
       OTA_CONFIG_KEY: ${{ secrets.OTA_CONFIG_KEY }}

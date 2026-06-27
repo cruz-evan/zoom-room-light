@@ -117,7 +117,9 @@ contract:
 | Schedule poll | active scheduled meeting | `{"mode":"meeting_status","state":"in_progress"}` |
 | Schedule poll | active scheduled meeting inside `ENDING_SOON_MINUTES` | `{"mode":"meeting_status","state":"ending_soon","minutes":5}` |
 
-At a high level, the Worker keeps one persisted room state in Workers KV. Zoom
+At a high level, the Worker keeps persisted room state in Workers KV. With
+`PICO_ROOM_ASSIGNMENTS`, each Pico gets its own `current-state:<device_id>` key;
+without it, the Worker falls back to the legacy single `current-state` key. Zoom
 webhooks are the real-time signal, and Microsoft Graph schedule polls are the
 calendar fallback plus empty-room signal. The Pico does not decide meeting
 state; it only polls `/device/state` and renders the persisted command.
@@ -139,8 +141,9 @@ Zoom state changes:
 - Zoom events use `zoom_event_ts` stale-event protection so an older
   `meeting.started` cannot resurrect a meeting after a newer `meeting.ended`.
 
-Cloudflare Cron runs the Microsoft Graph schedule check every minute. The
-schedule check computes three signals from the room calendar:
+Cloudflare Cron runs the Microsoft Graph schedule check every minute. With
+assigned Microsoft calendar users, the schedule check computes three signals for
+each assigned room calendar:
 
 - `upcoming`: a meeting starts inside the configured lookahead window.
 - `active`: the current time is inside a scheduled meeting window.
@@ -241,7 +244,7 @@ For production polling, set the Pico's `STATE_URL` to the Worker endpoint:
 
 ```python
 STATE_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/device/state"
-DEVICE_TOKEN = "same-low-privilege-device-token-if-configured"
+DEVICE_POLL_TOKEN = "same-low-privilege-poll-token-if-configured"
 OTA_MANIFEST_URL = "http://zoom-led-room-light.<your-subdomain>.workers.dev/ota/manifest.json"
 ```
 

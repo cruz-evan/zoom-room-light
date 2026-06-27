@@ -51,8 +51,9 @@ DEVICE_HARDWARE = {
 # already include it, preserving older single-device /device/state URLs.
 STATE_URL = "http://YOUR_RELAY_HOST:5050/device/state"
 
-# Optional low-privilege device token for the relay.
-DEVICE_TOKEN = ""
+# Optional low-privilege polling token for the relay.
+# Prefer injecting this from a repository secret during provisioning.
+DEVICE_POLL_TOKEN = ""
 
 # Optional OTA manifest URL. Use the Cloudflare Worker proxy for boards that
 # cannot fetch GitHub Pages over HTTPS directly.
