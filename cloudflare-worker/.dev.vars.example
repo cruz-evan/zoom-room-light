@@ -10,6 +10,6 @@ MICROSOFT_TENANT_ID=replace-with-azure-tenant-id
 MICROSOFT_CLIENT_ID=replace-with-azure-app-client-id
 MICROSOFT_CLIENT_SECRET=replace-with-azure-app-client-secret
 MICROSOFT_CALENDAR_USER_ID=room@example.com
-DEVICE_POLL_TOKEN=
+STATE_POLL_TOKEN=
 ADMIN_TOKEN=replace-with-a-random-admin-token-for-simulate-endpoints
 SCHEDULE_END_CLEAR_GRACE_MINUTES=5

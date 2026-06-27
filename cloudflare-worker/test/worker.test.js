@@ -30,6 +30,7 @@ function env(overrides = {}) {
   return {
     STATE_KV: new MemoryKv(),
     ZOOM_WEBHOOK_SECRET_TOKEN: "zoom-secret",
+    STATE_POLL_TOKEN: "",
     DEVICE_POLL_TOKEN: "",
     DEVICE_TOKEN: "",
     ADMIN_TOKEN: "admin-token",
@@ -73,7 +74,21 @@ describe("Cloudflare Worker relay", () => {
     });
   });
 
-  it("requires the optional device token when configured", async () => {
+  it("requires the optional state poll token when configured", async () => {
+    const secureEnv = env({ STATE_POLL_TOKEN: "state-poll-token" });
+    const unauthorized = await worker.fetch(new Request("https://relay.test/device/state"), secureEnv);
+    assert.equal(unauthorized.status, 401);
+
+    const authorized = await worker.fetch(
+      new Request("https://relay.test/device/state", {
+        headers: { Authorization: "Bearer state-poll-token" },
+      }),
+      secureEnv,
+    );
+    assert.equal(authorized.status, 200);
+  });
+
+  it("still accepts the legacy DEVICE_POLL_TOKEN name for polling auth", async () => {
     const secureEnv = env({ DEVICE_POLL_TOKEN: "device-token" });
     const unauthorized = await worker.fetch(new Request("https://relay.test/device/state"), secureEnv);
     assert.equal(unauthorized.status, 401);

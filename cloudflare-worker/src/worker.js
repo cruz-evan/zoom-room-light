@@ -2083,7 +2083,7 @@ function authorizeBearer(request, token) {
 }
 
 function devicePollToken(env) {
-  return String(env.DEVICE_POLL_TOKEN || env.DEVICE_TOKEN || "");
+  return String(env.STATE_POLL_TOKEN || env.DEVICE_POLL_TOKEN || env.DEVICE_TOKEN || "");
 }
 
 function pollSeconds(env) {
