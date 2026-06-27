@@ -35,6 +35,7 @@ except ImportError:
 
 STATE_FILE = "ota_state.json"
 BAD_VERSIONS_FILE = "ota_bad.json"
+PRETRIAL_FAILURES_FILE = "ota_failures.json"
 EXCLUDED_PATHS = ("secrets.py", "secrets.example.py", "boot.py", "ota_client.py")
 TRIAL_COMMIT = "trial_commit"
 TRIAL_PENDING = "trial_pending"
@@ -42,6 +43,8 @@ TRIAL_RUNNING = "trial_running"
 CONFIRMED = "confirmed"
 MAX_TRIAL_BOOTS = 1
 MAX_BAD_VERSIONS = 8
+MAX_PRETRIAL_FAILURES = 3
+MAX_PRETRIAL_FAILURE_RECORDS = 8
 MIN_FREE_AFTER_OTA_BYTES = 64 * 1024
 
 
@@ -57,6 +60,7 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
 
     if not version:
         raise OtaError("manifest is missing version")
+    _remove_download_temps(files)
     if _is_bad_version(version):
         print("OTA version is marked bad; skipping:", version)
         return "bad"
@@ -67,6 +71,7 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
             pending.append(file_info)
 
     if not pending:
+        _clear_pretrial_failure(version)
         _write_confirmed_state(version, manifest_build_epoch, files)
         return "current"
 
@@ -81,21 +86,29 @@ def check_for_update(manifest_url, token="", max_file_bytes=65536, timeout_secon
         return "stale"
 
     print("OTA update available:", version)
-    _ensure_free_space(pending)
-    _download_pending(pending, token, max_file_bytes, timeout_seconds)
-    previous_state = _read_json(STATE_FILE, {})
-    trial_state = _trial_state(version, manifest_build_epoch, files, pending, previous_state)
-    _write_json(STATE_FILE, trial_state)
+    previous_state = None
+    trial_state = None
     try:
+        _ensure_free_space(pending)
+        _download_pending(pending, token, max_file_bytes, timeout_seconds)
+        previous_state = _read_json(STATE_FILE, {})
+        trial_state = _trial_state(version, manifest_build_epoch, files, pending, previous_state)
+        _write_json(STATE_FILE, trial_state)
         _commit_downloads(pending, keep_backups=True)
-    except Exception:
-        _restore_trial_backups(trial_state)
-        _remove_trial_temps(trial_state)
-        if previous_state:
-            _write_json(STATE_FILE, previous_state)
-        else:
-            _remove_if_exists(STATE_FILE)
+    except Exception as exc:
+        _remove_download_temps(pending)
+        if trial_state is not None:
+            _restore_trial_backups(trial_state)
+            if previous_state:
+                _write_json(STATE_FILE, previous_state)
+            else:
+                _remove_if_exists(STATE_FILE)
+        try:
+            _record_pretrial_failure(version, manifest_build_epoch, str(exc))
+        except Exception:
+            pass
         raise
+    _clear_pretrial_failure(version)
     trial_state["status"] = TRIAL_PENDING
     trial_state["trial_boots"] = 0
     _write_json(STATE_FILE, trial_state)
@@ -404,6 +417,13 @@ def _remove_trial_temps(state):
             _remove_if_exists(_temp_name(path))
 
 
+def _remove_download_temps(files):
+    for file_info in files or ():
+        path = file_info.get("path")
+        if path:
+            _remove_if_exists(_temp_name(path))
+
+
 def _commit_rank(path):
     if path == "ota_client.py":
         return 20
@@ -463,6 +483,52 @@ def _mark_bad_version(state, reason):
     if len(entries) > MAX_BAD_VERSIONS:
         entries = entries[-MAX_BAD_VERSIONS:]
     _write_json(BAD_VERSIONS_FILE, {"bad": entries})
+
+
+def _record_pretrial_failure(version, build_epoch_utc, error):
+    failures = _read_json(PRETRIAL_FAILURES_FILE, {})
+    entries = []
+    current = None
+    for item in failures.get("failures", ()):
+        if item.get("version") == version:
+            current = item
+        else:
+            entries.append(item)
+
+    count = _as_int(current.get("count"), 0) + 1 if isinstance(current, dict) else 1
+    record = {
+        "version": version,
+        "build_epoch_utc": build_epoch_utc,
+        "count": count,
+        "last_error": str(error or "unknown")[:96],
+    }
+    entries.append(record)
+    if len(entries) > MAX_PRETRIAL_FAILURE_RECORDS:
+        entries = entries[-MAX_PRETRIAL_FAILURE_RECORDS:]
+    _write_json(PRETRIAL_FAILURES_FILE, {"failures": entries})
+
+    if count >= MAX_PRETRIAL_FAILURES:
+        _mark_bad_version(
+            {"version": version, "build_epoch_utc": build_epoch_utc},
+            "pretrial_failure",
+        )
+
+
+def _clear_pretrial_failure(version):
+    failures = _read_json(PRETRIAL_FAILURES_FILE, {})
+    entries = []
+    changed = False
+    for item in failures.get("failures", ()):
+        if item.get("version") == version:
+            changed = True
+        else:
+            entries.append(item)
+    if not changed:
+        return
+    if entries:
+        _write_json(PRETRIAL_FAILURES_FILE, {"failures": entries})
+    else:
+        _remove_if_exists(PRETRIAL_FAILURES_FILE)
 
 
 def _ensure_free_space(files):

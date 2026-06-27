@@ -87,6 +87,23 @@ def manifest_for(path, content, *, build_epoch_utc, version="test-version", url=
     }
 
 
+def manifest_for_files(files, *, build_epoch_utc, version="test-version"):
+    return {
+        "schema": 1,
+        "version": version,
+        "build_epoch_utc": build_epoch_utc,
+        "files": [
+            {
+                "path": path,
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "url": url,
+            }
+            for path, content, url in files
+        ],
+    }
+
+
 def test_ota_skips_file_diff_when_manifest_build_is_not_newer(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "main.py").write_bytes(b"newer usb build\n")
@@ -278,3 +295,95 @@ def test_bad_version_is_not_downloaded_again(monkeypatch, tmp_path):
 
     assert module.check_for_update(manifest_url) == "bad"
     assert requests.urls == [manifest_url]
+
+
+def test_pretrial_download_failure_cleans_temps_and_records_failure(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "main.py").write_bytes(b"older usb build\n")
+
+    manifest_url = "https://ota.test/manifest.json"
+    build_info_url = "https://ota.test/build_info.py"
+    main_url = "https://ota.test/main.py"
+    build_info_content = b"BUILD_VERSION='bad-build'\n"
+    main_content = b"newer ota build\n"
+    requests = FakeRequests(
+        {
+            manifest_url: FakeResponse(
+                json_data=manifest_for_files(
+                    [
+                        ("build_info.py", build_info_content, build_info_url),
+                        ("main.py", main_content, main_url),
+                    ],
+                    build_epoch_utc=101,
+                    version="flaky-version",
+                )
+            ),
+            build_info_url: FakeResponse(content=build_info_content),
+            main_url: MemoryError("memory allocation failed"),
+        }
+    )
+    module = load_ota_client(monkeypatch, requests, installed_build_epoch=100)
+
+    try:
+        module.check_for_update(manifest_url)
+    except MemoryError:
+        pass
+    else:
+        raise AssertionError("download failure should bubble up for telemetry")
+
+    assert not (tmp_path / "build_info.py.new").exists()
+    assert (tmp_path / "main.py").read_bytes() == b"older usb build\n"
+    failures = json.loads((tmp_path / module.PRETRIAL_FAILURES_FILE).read_text(encoding="utf-8"))
+    assert failures["failures"] == [
+        {
+            "version": "flaky-version",
+            "build_epoch_utc": 101,
+            "count": 1,
+            "last_error": "memory allocation failed",
+        }
+    ]
+    assert not (tmp_path / module.BAD_VERSIONS_FILE).exists()
+
+
+def test_repeated_pretrial_failures_mark_version_bad(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "main.py").write_bytes(b"older usb build\n")
+
+    manifest_url = "https://ota.test/manifest.json"
+    file_url = "https://ota.test/main.py"
+    new_content = b"newer ota build\n"
+    requests = FakeRequests(
+        {
+            manifest_url: FakeResponse(
+                json_data=manifest_for(
+                    "main.py",
+                    new_content,
+                    build_epoch_utc=101,
+                    version="flaky-version",
+                    url=file_url,
+                )
+            ),
+            file_url: MemoryError("memory allocation failed"),
+        }
+    )
+    module = load_ota_client(monkeypatch, requests, installed_build_epoch=100)
+
+    for _ in range(module.MAX_PRETRIAL_FAILURES):
+        try:
+            module.check_for_update(manifest_url)
+        except MemoryError:
+            pass
+        else:
+            raise AssertionError("download failure should bubble up for telemetry")
+
+    bad = json.loads((tmp_path / module.BAD_VERSIONS_FILE).read_text(encoding="utf-8"))
+    assert bad["bad"] == [
+        {
+            "version": "flaky-version",
+            "build_epoch_utc": 101,
+            "reason": "pretrial_failure",
+        }
+    ]
+
+    requests.responses[file_url] = AssertionError("bad version should not download again")
+    assert module.check_for_update(manifest_url) == "bad"

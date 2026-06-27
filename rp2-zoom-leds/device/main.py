@@ -67,7 +67,6 @@ OTA_CONFIG_CHECK_MARKER = "ota_config_check.flag"
 STATE_REQUEST_MARKER = "state_request.flag"
 
 OTA_TRIAL_STEP_MS = 350
-OTA_TRIAL_INJECT_FAILURE = True
 OTA_TRIAL_COMMANDS = (
     {"mode": "off"},
     {"mode": "solid", "rgb": [255, 255, 255]},
@@ -376,9 +375,6 @@ def run_ota_trial_if_needed(strip, status, telemetry):
 
 
 def _run_ota_trial_self_test(strip, status, telemetry):
-    if OTA_TRIAL_INJECT_FAILURE:
-        raise RuntimeError("intentional OTA trial failure")
-
     for command in OTA_TRIAL_COMMANDS:
         ok = apply_command(strip, status, command, telemetry, "ota_trial")
         if not ok:
