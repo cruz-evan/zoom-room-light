@@ -64,6 +64,52 @@ manifest check can also confirm connectivity. Configure this in
 
 The `.idea/externalTools.xml` file also adds MPRemote helpers for REPL, copying `main.py`, and deploying device files.
 
+## Virtual Pico Lighting Emulator
+
+Run the host-side virtual Pico before flashing lighting changes. It executes
+the device LED routines with fake `machine`, `neopixel`, and virtual time, then
+reports Pico-ish CPU, NeoPixel write, watchdog, state-poll, and heap budgets.
+It also estimates OTA trial-mode storage using board flash, a MicroPython
+firmware reserve, current device app files, rollback backups, OTA temp files,
+and the 64 KB free-space reserve enforced by `ota_client.py`.
+
+Cycle through every built-in lighting routine:
+
+```bash
+python3 scripts/emulate_pico.py --sequence all
+```
+
+Run one routine with stricter constraints:
+
+```bash
+python3 scripts/emulate_pico.py \
+  --sequence starting-soon \
+  --duration-seconds 30 \
+  --led-count 144 \
+  --max-loop-ms 20 \
+  --min-free-bytes 24000
+```
+
+List available sequences:
+
+```bash
+python3 scripts/emulate_pico.py --list-sequences
+```
+
+Use `--json` when wiring the emulator into scripts or CI. The model is
+conservative rather than cycle-accurate; keep real-board smoke tests for final
+Wi-Fi, MicroPython, and electrical timing confidence.
+
+Tune storage assumptions when checking a different board or MicroPython build:
+
+```bash
+python3 scripts/emulate_pico.py \
+  --sequence all \
+  --flash-bytes 2097152 \
+  --micropython-bytes 786432 \
+  --fs-used-bytes 0
+```
+
 ## Flash MicroPython
 
 1. Download the correct MicroPython UF2 for your board:
