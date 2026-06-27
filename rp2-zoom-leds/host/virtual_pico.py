@@ -19,6 +19,7 @@ DEFAULT_FS_FILE_OVERHEAD_BYTES = 256
 OTA_STATE_ESTIMATE_BYTES = 4096
 OTA_BAD_RECORD_ESTIMATE_BYTES = 512
 OTA_EXCLUDED_FILES = {"secrets.example.py", "build_info.py", "boot.py", "ota_client.py"}
+STARTING_SOON_SCRAMBLE_FRAMES = 4
 
 DEFAULT_SEQUENCE = (
     ("solid white", {"mode": "solid", "rgb": [255, 255, 255]}),
@@ -336,6 +337,7 @@ class VirtualBudget:
     pixel_set_us: float = 3.0
     pixel_fill_us: float = 35.0
     pixel_fill_per_led_us: float = 0.45
+    pixel_buffer_copy_us_per_led: float = 0.75
     pattern_math_us_per_led: float = 2.8
     pattern_math_us_per_active_led: float = 18.0
     solid_math_us: float = 80.0
@@ -481,14 +483,29 @@ def _estimate_command_cost(budget, command, led_count, force):
         budget.charge_us(budget.tick_base_us, "tick")
 
     if mode == "meeting_status" and command.get("state") == "starting_soon":
-        active = min(led_count, 19)
+        budget.charge_us(budget.solid_math_us, "starting_soon_pulse_colors")
         if command.get("seconds_until_expected_state_change") is not None:
-            budget.charge_us(led_count * budget.pattern_math_us_per_led, "starting_soon_blend_frame")
-            budget.alloc_temp(900 + (active * 96), "starting_soon_levels")
-        elif force:
-            budget.charge_us(led_count * budget.pattern_math_us_per_led, "starting_soon_full_frame")
-            budget.alloc_temp(900 + (active * 96), "starting_soon_levels")
-        budget.charge_us(active * budget.pattern_math_us_per_active_led, "starting_soon_active_pixels")
+            try:
+                remaining = float(command.get("seconds_until_expected_state_change"))
+            except (TypeError, ValueError):
+                remaining = None
+            try:
+                threshold_minutes = float(command.get("threshold", command.get("minutes", 15.0)))
+            except (TypeError, ValueError):
+                threshold_minutes = 15.0
+            if remaining is not None:
+                total = max(1.0, threshold_minutes * 60.0)
+                blend = 1.0 - (max(0.0, remaining) / total)
+                if 0.0 < blend < 1.0:
+                    choice_scale = 1.0 if force else (1.0 / STARTING_SOON_SCRAMBLE_FRAMES)
+                    budget.charge_us(
+                        led_count * budget.pattern_math_us_per_led * choice_scale,
+                        "starting_soon_mask_choice",
+                    )
+                    budget.charge_us(
+                        led_count * budget.pixel_buffer_copy_us_per_led,
+                        "starting_soon_buffer_mix",
+                    )
     elif mode in ("pulse", "meeting_status") or mode == "meeting":
         budget.charge_us(budget.solid_math_us, "solid_or_pulse_math")
     elif mode in ("solid", "off"):

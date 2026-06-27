@@ -58,44 +58,29 @@ def load_led_strip(monkeypatch, ticks, pixel_class=FakeNeoPixel):
     return importlib.import_module("device.led_strip")
 
 
-def test_starting_soon_renders_smooth_cyan_cue_with_tail(monkeypatch):
+def test_starting_soon_pulses_full_strip_cyan(monkeypatch):
     ticks = {"now": 0}
     led_strip = load_led_strip(monkeypatch, ticks)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0)
 
     strip.apply({"mode": "meeting_status", "state": "starting_soon", "minutes": 5})
 
-    pixels = strip.pixels.values
-    cyan = (44, 213, 252)
-    background = (0, 2, 8)
-    full_block_indexes = list(range(0, 7))
-    tail_indexes = list(range(14, 24))
+    dim_pixels = strip.pixels.values
+    assert len(set(dim_pixels)) == 1
+    assert dim_pixels[0] == (11, 53, 63)
 
-    assert [index for index, pixel in enumerate(pixels) if pixel == cyan] == full_block_indexes
-    assert all(pixels[index] != background for index in tail_indexes)
-    assert all(pixels[index] != cyan for index in tail_indexes)
-    assert all(
-        sum(pixels[tail_indexes[index]]) < sum(pixels[tail_indexes[index + 1]])
-        for index in range(len(tail_indexes) - 1)
-    )
-    assert all(
-        pixel == background
-        for index, pixel in enumerate(pixels)
-        if index not in set(full_block_indexes + tail_indexes)
-    )
-
-    ticks["now"] = 34
+    ticks["now"] = 900
     strip.tick()
 
-    pixels = strip.pixels.values
-    assert pixels[7] != background
-    assert pixels[7] != cyan
-    assert sum(pixels[7]) > sum(background)
+    peak_pixels = strip.pixels.values
+    assert len(set(peak_pixels)) == 1
+    assert peak_pixels[0] == (44, 213, 252)
 
 
 def test_starting_soon_blends_in_progress_blue_as_start_approaches(monkeypatch):
     ticks = {"now": 0}
     led_strip = load_led_strip(monkeypatch, ticks)
+    cyan = (11, 53, 63)
     blue = (11, 21, 63)
 
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0)
@@ -108,6 +93,7 @@ def test_starting_soon_blends_in_progress_blue_as_start_approaches(monkeypatch):
             "seconds_until_expected_state_change": 900,
         }
     )
+    assert set(strip.pixels.values) == {cyan}
     assert list(strip.pixels.values).count(blue) == 0
 
     strip.apply(
@@ -119,6 +105,7 @@ def test_starting_soon_blends_in_progress_blue_as_start_approaches(monkeypatch):
             "seconds_until_expected_state_change": 450,
         }
     )
+    assert set(strip.pixels.values) == {cyan, blue}
     halfway_blue = list(strip.pixels.values).count(blue)
     assert 8 <= halfway_blue <= 16
 
@@ -131,6 +118,7 @@ def test_starting_soon_blends_in_progress_blue_as_start_approaches(monkeypatch):
             "seconds_until_expected_state_change": 0,
         }
     )
+    assert set(strip.pixels.values) == {blue}
     assert list(strip.pixels.values).count(blue) == 24
 
 
@@ -150,14 +138,14 @@ def test_in_progress_renders_full_strip_blue_pulse(monkeypatch):
 
     early_pixels = list(strip.pixels.values)
     assert len(set(early_pixels)) == 1
-    assert early_pixels[0] == (15, 30, 91)
+    assert early_pixels[0] == (16, 30, 91)
 
     ticks["now"] = 1292
     strip.tick()
 
     midpoint_pixels = list(strip.pixels.values)
     assert len(set(midpoint_pixels)) == 1
-    assert midpoint_pixels[0] == (27, 51, 158)
+    assert midpoint_pixels[0] == (27, 51, 157)
 
     ticks["now"] = 2583
     strip.tick()
@@ -172,7 +160,7 @@ def test_animation_ticks_are_limited_to_max_refresh_rate(monkeypatch):
     led_strip = load_led_strip(monkeypatch, ticks)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
 
-    strip.apply({"mode": "meeting_status", "state": "starting_soon", "minutes": 5})
+    strip.apply({"mode": "meeting_status", "state": "ending_soon", "minutes": 0, "threshold": 1})
     writes_after_apply = strip.pixels.write_count
 
     ticks["now"] = 33
@@ -216,17 +204,56 @@ def test_full_strip_colors_use_raw_buffer_when_available(monkeypatch):
     assert strip.pixels.set_count == 0
 
 
-def test_starting_soon_uses_raw_buffer_for_moving_pixels(monkeypatch):
+def test_starting_soon_uses_raw_buffer_for_countdown_pixels(monkeypatch):
     ticks = {"now": 0}
     led_strip = load_led_strip(monkeypatch, ticks, FakeBufferedNeoPixel)
     strip = led_strip.LedStrip(pin=0, count=24, brightness=1.0, max_refresh_fps=30)
+    blend_calls = {"count": 0}
+    encode_calls = {"count": 0}
+    original_blend_pixel = strip._starting_soon_blend_pixel
+    original_encoded_pixel = strip._encoded_pixel
 
-    strip.apply({"mode": "meeting_status", "state": "starting_soon", "minutes": 5})
+    def counted_blend_pixel(index, frame, threshold):
+        blend_calls["count"] += 1
+        return original_blend_pixel(index, frame, threshold)
+
+    def counted_encoded_pixel(color, bpp):
+        encode_calls["count"] += 1
+        return original_encoded_pixel(color, bpp)
+
+    strip._starting_soon_blend_pixel = counted_blend_pixel
+    strip._encoded_pixel = counted_encoded_pixel
+
+    strip.apply(
+        {
+            "mode": "meeting_status",
+            "state": "starting_soon",
+            "minutes": 15,
+            "threshold": 15,
+            "seconds_until_expected_state_change": 450,
+        }
+    )
     ticks["now"] = 34
     strip.tick()
 
     assert strip.pixels.set_count == 0
-    assert strip.pixels.write_count == 3
+    assert strip.pixels.write_count == 2
+    assert blend_calls["count"] == 24
+    assert encode_calls["count"] == 2
+
+    ticks["now"] = 68
+    strip.tick()
+
+    assert strip.pixels.set_count == 0
+    assert blend_calls["count"] == 24
+    assert encode_calls["count"] == 4
+
+    ticks["now"] = 102
+    strip.tick()
+
+    assert strip.pixels.set_count == 0
+    assert blend_calls["count"] == 48
+    assert encode_calls["count"] == 6
 
 
 def test_apply_forces_new_command_without_waiting_for_next_frame(monkeypatch):
