@@ -51,11 +51,21 @@ class UdpTelemetry:
         if self.lock is None:
             return self._log_unlocked(event, **fields)
 
-        self.lock.acquire()
+        if not self._try_acquire_lock():
+            return
         try:
             return self._log_unlocked(event, **fields)
         finally:
             self.lock.release()
+
+    def _try_acquire_lock(self):
+        try:
+            return self.lock.acquire(False)
+        except TypeError:
+            try:
+                return self.lock.acquire(0)
+            except TypeError:
+                return False
 
     def _log_unlocked(self, event, **fields):
         self.sequence += 1
@@ -77,6 +87,10 @@ class UdpTelemetry:
     def _socket(self):
         if self.sock is None:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                self.sock.settimeout(0)
+            except Exception:
+                pass
             try:
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             except Exception:

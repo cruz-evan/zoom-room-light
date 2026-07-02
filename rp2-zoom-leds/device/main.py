@@ -598,16 +598,19 @@ class ThreadedNetworkCommandReader:
             return
 
         self.resetting = True
-        self.telemetry.log(
-            "network_thread_watchdog_reset",
-            reason=reason,
-            stale_ms=stale_ms,
-            watchdog_seconds=int(self.watchdog_ms / 1000),
-            reader_enabled=getattr(self.reader, "enabled", False),
-            state_enabled=getattr(self.reader, "state_enabled", False),
-            reader_failures=getattr(self.reader, "failures", 0),
-        )
         mark_watchdog_reset_pending()
+        try:
+            self.telemetry.log(
+                "network_thread_watchdog_reset",
+                reason=reason,
+                stale_ms=stale_ms,
+                watchdog_seconds=int(self.watchdog_ms / 1000),
+                reader_enabled=getattr(self.reader, "enabled", False),
+                state_enabled=getattr(self.reader, "state_enabled", False),
+                reader_failures=getattr(self.reader, "failures", 0),
+            )
+        except Exception:
+            pass
         _sleep_ms(250)
         machine.reset()
 

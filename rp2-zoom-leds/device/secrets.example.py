@@ -100,9 +100,9 @@ RESOURCE_MONITOR_MIN_FREE_BYTES = 24000
 RESOURCE_MONITOR_GC_COLLECT = False
 RESOURCE_MONITOR_INCLUDE_TEMP = True
 
-# Reset the board if the background network polling thread stops heartbeating.
-# This recovers from stuck Wi-Fi/HTTP/OTA calls without physically power-cycling.
+# Reset the board if network polling or the main loop wedges. Disable the
+# hardware watchdog only for bench debugging when automatic reset hides evidence.
 NETWORK_THREAD_WATCHDOG_ENABLED = True
 NETWORK_THREAD_WATCHDOG_SECONDS = 30
-HARDWARE_WATCHDOG_ENABLED = False
+HARDWARE_WATCHDOG_ENABLED = True
 HARDWARE_WATCHDOG_TIMEOUT_MS = 8000

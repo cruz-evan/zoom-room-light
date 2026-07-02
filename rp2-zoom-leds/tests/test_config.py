@@ -159,8 +159,14 @@ def test_app_ota_can_be_explicitly_enabled():
     assert config.OTA_ENABLED is True
 
 
-def test_hardware_watchdog_is_disabled_by_default():
+def test_hardware_watchdog_is_enabled_by_default():
     config = load_config_with_secrets()
+
+    assert config.HARDWARE_WATCHDOG_ENABLED is True
+
+
+def test_hardware_watchdog_can_be_disabled_for_bench_debugging():
+    config = load_config_with_secrets(HARDWARE_WATCHDOG_ENABLED=False)
 
     assert config.HARDWARE_WATCHDOG_ENABLED is False
 
